@@ -1,0 +1,20 @@
+{
+	"diagnostics": {
+		"unusedPrivateMethod": {
+			"enabled": false,
+			"severity": "hint"
+		},
+        "invalidExtends": {
+            "enabled": false,
+            "severity": "error"
+        },
+        "invalidImplements": {
+            "enabled": false,
+            "severity": "error"
+        },
+        "emptyCatchBlock": {
+            "enabled": false,
+            "severity": "warning"
+        }
+	}
+}

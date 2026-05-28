@@ -1,0 +1,25 @@
+{
+    "web":{
+        "rewrites":{
+            "enable":true
+        },
+        "HTTP":{
+            "port":60830
+        }
+    },
+    "app":{
+        "cfengine":"adobe@2023"
+    },
+    "name":"${APPNAME}",
+    "fusionreactor":{
+        "enable":"true"
+    },
+    "scripts":{
+        "onServerInstall":"cfpm install sqlserver,mail,pdf,ftp,htmltopdf,scheduler,debugger"
+    },
+    "jvm":{
+        "args":[
+            "-Dcoldfusion.runtime.remotemethod.matchArguments=false"
+        ]
+    }
+}
