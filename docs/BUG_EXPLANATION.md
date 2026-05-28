@@ -1,0 +1,77 @@
+# Technical Explanation
+
+## What the engine appears to be doing
+
+Under concurrent request load, ACF 2023 intermittently allows a **transient CFC's
+`variables`-scoped state to be contaminated by a different concurrent instance** of a
+(usually same-typed) component. Two manifestations have been observed; this repository
+reproduces the underlying class of both.
+
+Both involve **transients** — fresh instances created per request/use via WireBox
+`getInstance()`, with no application-scoped or singleton sharing.
+
+## Where the table name actually lives (and why the production workaround works)
+
+This is the key correction to an earlier hypothesis that blamed Quick's metadata cache
+(`quickMeta`). Tracing stock Quick 12 / qb 10 shows the metadata cache is **not** the
+contaminated structure:
+
+- The **entity** stores its table once at init in `variables._table`
+  (`BaseEntity.metadataInspection()` reads it from CFC metadata via the `quickMeta`
+  cache). `BaseEntity.tableName()` returns this value. It is per-instance and observed to
+  be **clean**.
+- `QuickBuilder.tableName()` delegates to `getEntity().tableName()` — it does not store
+  the table itself.
+- The underlying **qb `QueryBuilder`** has its own `variables.tableName` / `FROM` clause,
+  set once when the query is created (`QuickBuilder.newQuery()` calls
+  `.from( getEntity().tableName() )`). **This** is the value observed to be contaminated
+  across concurrent requests.
+
+The production vendor workaround is decisive proof of where the contamination is:
+
+```cfml
+// just before executing the UPDATE
+variables.qb.from( getEntity().tableName() );
+```
+
+Re-reading the table from the **entity** (the clean source) repairs the **builder** (the
+contaminated source). If the metadata cache itself were polluted,
+`getEntity().tableName()` would also be wrong and this workaround could not work.
+
+## Manifestation 1 — closure captured `this`
+
+`QuickBuilder.onDIComplete()` sets a `columnFormatter` closure on the qb that captures
+`this` (the `QuickBuilder`). When invoked later, under concurrency the captured `this`
+can resolve to a different `QuickBuilder` instance, so `qualifyColumn()` qualifies columns
+with the wrong table. (Production mitigated this by replacing the closure with a direct
+object reference in `QuickQB.applyColumnFormatter()`.)
+
+## Manifestation 2 — `variables`-scoped property
+
+Even without the closure, the qb instance's `variables.tableName` / a `BaseEntity`'s
+`variables.*` properties intermittently hold another concurrent instance's value. The
+production failure (`UPDATE [user_type] ...` instead of `UPDATE [remote_app_remote_carrier] ...`)
+is this manifestation.
+
+This repository reproduces this class directly: see
+[LOCAL_REPRODUCTION_RESULTS.md](LOCAL_REPRODUCTION_RESULTS.md), where concurrent transient
+construction intermittently leaves a `BaseEntity`'s `variables._str` helper resolving to an
+unrelated value (`Element _STR is undefined in a Java object of type class [Ljava.lang.String;`).
+That is a `variables`-scoped property holding another instance's value — the same fault as
+the production table-name contamination, surfaced on a different property.
+
+## Why it is intermittent
+
+It requires a specific interleaving of concurrent CFC construction / scope assignment.
+It does not occur with single requests; it appears only under concurrent load. This is the
+classic signature of a thread-safety / memory-visibility issue in the engine runtime —
+e.g. missing memory fencing allowing stale or cross-thread reads of component instance
+data, or compiled bytecode sharing references that should be thread-local.
+
+## Scope of impact
+
+Any code where, under concurrency:
+
+- multiple CFCs are constructed concurrently (very common with per-request transients), and
+- they have mutable `variables`-scoped properties, and/or
+- closures capture `this` and are invoked after other concurrent requests run.

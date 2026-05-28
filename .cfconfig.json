@@ -1,38 +1,21 @@
 {
-	"cacheDefaultObject":"coldbox",
-    "debuggingEnabled":true,
+    "debuggingEnabled":false,
     "debuggingReportExecutionTimes":false,
-    "disableInternalCFJavaComponents":false,
-	"requestTimeoutEnabled":true,
-	"requestTimeout":"0,0,5,0",
-	"robustExceptionEnabled":true,
-    "caches":{
-		"coldbox":{
-			"storage":"true",
-            "type":"RAM",
-            "custom":{
-				"timeToIdleSeconds":"1800",
-                "timeToLiveSeconds":"3600"
-            },
-            "class":"lucee.runtime.cache.ram.RamCache",
-            "readOnly":"false"
-        }
-    },
-	"datasources" : {
-		"${DB_DATABASE}":{
+    "requestTimeoutEnabled":true,
+    "requestTimeout":"0,0,5,0",
+    "robustExceptionEnabled":true,
+    "datasources":{
+        "${DB_DATABASE}":{
             "host":"${DB_HOST}",
-            "dbdriver":"${DB_DRIVER}",
+            "dbdriver":"MSSQLServer",
             "database":"${DB_DATABASE}",
-            "dsn":"jdbc:mysql://{host}:{port}/{database}",
-            "custom":"useUnicode=true&characterEncoding=UTF-8&useLegacyDatetimeCode=true&autoReconnect=true",
+            "dsn":"jdbc:macromedia:sqlserver://{host}:{port};databaseName={database};SelectMethod=direct;sendStringParametersAsUnicode=false",
             "port":"${DB_PORT}",
             "class":"${DB_CLASS}",
             "username":"${DB_USER}",
             "password":"${DB_PASSWORD}",
             "maintainConnections":true,
-            "maxPooledStatements":"100",
-            "clob": true
+            "maxPooledStatements":"100"
         }
-	},
-	"whitespaceManagement":"white-space-pref"
+    }
 }

@@ -18,20 +18,19 @@
     "contributors":[],
     "ignore":[],
     "devDependencies":{
-        "testbox":"*",
-        "commandbox-boxlang":"*"
+        "testbox":"*"
     },
     "dependencies":{
-        "coldbox":"^8.0.0"
+        "coldbox":"^8.0.0",
+        "quick":"^12.0.0"
     },
     "installPaths":{
         "coldbox":"coldbox/",
-        "testbox":"testbox/"
+        "testbox":"testbox/",
+        "quick":"modules/quick/"
     },
     "scripts":{
         "postInstall":"pathExists .env || cp .env.example .env && package set ignore=[]",
-        "format":"!boxlang format --source config/,handlers/,interceptors/,models/,modules_app/,tests/specs/,*.cfc",
-        "format:check":"!boxlang format --check --source config/,handlers/,interceptors/,models/,modules_app/,tests/specs/,*.cfc",
         "docker:build":"!docker build --no-cache -t my-coldbox-app -f ./docker/Dockerfile ./",
         "docker:run":"!docker run -it -p 8080:8080 my-coldbox-app",
         "docker:bash":"!docker run -it my-coldbox-app /bin/bash",
@@ -40,6 +39,6 @@
     "testbox":{
         "runner":"/tests/runner.cfm"
     },
-    "language":"BoxLang",
+    "language":"CFML",
     "description":"A ColdBox Application created with the ColdBox CLI"
 }

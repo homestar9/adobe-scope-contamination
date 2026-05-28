@@ -26,6 +26,12 @@ component {
 
 		// @app_routes@
 
+		// Scope-contamination reproduction endpoints
+		route( "/repro/alpha" ).to( "Repro.alpha" );
+		route( "/repro/bravo" ).to( "Repro.bravo" );
+		route( "/repro/status" ).to( "Repro.status" );
+		route( "/repro/stress" ).to( "Repro.stress" );
+
 		// Conventions-Based Routing
 		route( ":handler/:action?" ).end();
 	}

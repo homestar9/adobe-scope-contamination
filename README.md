@@ -1,117 +1,215 @@
-# Adobe Metadata Or Variables Scope Corruption
+# ACF 2023 — CFC `variables`-Scope / Closure Contamination Under Concurrency
 
-## Environment
+A minimal, deployable reproduction harness for an intermittent **Adobe ColdFusion 2023**
+concurrency defect: under concurrent request load, a **transient CFC's `variables`-scoped
+state is contaminated by a different concurrent instance**. In production this caused a
+Quick ORM query builder's table name to be overwritten by an unrelated entity's table,
+producing SQL like `UPDATE [user_type] ...` when it should have been
+`UPDATE [remote_app_remote_carrier] ...`.
 
-ColdFusion Engine: Adobe ColdFusion 2023, Update 18 (Build 330879)
-OS: Windows Server 2022
-Web Server: IIS
-JVM: Default ACF 2023 JVM
-Framework: ColdBox 8.x with Quick ORM 12.x
-Monitoring: FusionReactor
+This repo uses **stock, unpatched** ColdBox + Quick ORM against SQL Server and exercises the
+exact production code path. It is self-contained: two tiny entity pairs, a couple of
+endpoints, and built-in contamination detection/logging.
 
-## The Problem
+> **TL;DR for Adobe:** deploy to ACF 2023, create the `adobe-temp` datasource, run
+> `resources/schema.sql`, then hammer `/repro/alpha` and `/repro/bravo` concurrently (or hit
+> `/repro/stress`). Watch `logs/contamination_log.txt`. Full forensic write-up is in
+> [`docs/`](docs/).
 
-We are observing intermittent errors in production where a CFC component's variables-scoped property contains a value that belongs to a completely different component instance being used by a concurrent request. Specifically, the variables.tableName property on a query builder component (a transient, created fresh per use) intermittently contains a table name from a different entity's query builder.
+---
 
-## Evidence — Incident 1: Column Formatter Closure Contamination
+## What you're looking for
 
-Our ORM framework (Quick) assigns a columnFormatter closure to each query builder instance during initialization:
+A transient CFC, freshly created per request via WireBox `getInstance()`, intermittently
+ends up with a `variables`-scoped property whose value belongs to a **different concurrent
+instance**. Two observed manifestations (same root cause):
 
-// QuickBuilder.onDIComplete()
-variables.qb.setColumnFormatter( function( column ) {
-    return qualifyColumn( column );
-} );
+1. **Closure captured `this`** resolving to the wrong instance.
+2. **A `variables`-scoped property** (e.g. a query builder's `tableName`) holding another
+   instance's value.
 
-Each QuickBuilder instance has its own qualifyColumn() method that prefixes columns with the correct table name. Under concurrent requests, we observed that the closure's captured this reference was resolving to the wrong QuickBuilder instance, causing columns to be qualified with incorrect table names. For example, a query targeting the remote_app_remote_carrier table would have its columns prefixed with user_type. instead.
+See [`docs/BUG_EXPLANATION.md`](docs/BUG_EXPLANATION.md) and
+[`docs/PRODUCTION_EVIDENCE.md`](docs/PRODUCTION_EVIDENCE.md).
 
-We mitigated this by overriding the method to avoid the closure entirely and instead use a direct object reference:
+---
 
-public any function applyColumnFormatter( required any column ) {
-    if ( !isSimpleValue( arguments.column ) ) {
-        return arguments.column;
-    }
-    if ( !isNull( getQuickBuilder() ) ) {
-        return getQuickBuilder().qualifyColumn( arguments.column );
-    }
-    return variables.columnFormatter( arguments.column );
-}
+## Prerequisites
 
-## Evidence — Incident 2: Table Name Property Contamination
+- Adobe ColdFusion 2023 (Update 18 / build 330879 is where production runs; any 2023 build
+  is fine).
+- Microsoft SQL Server reachable from the CF server.
+- The SQL Server JDBC driver available to CF (bundled with ACF; on a fresh install ensure
+  the `sqlserver` package is installed via `cfpm install sqlserver`).
 
-After applying the above mitigation, we observed a second, distinct manifestation of the same underlying issue. This time, it is not a closure's captured scope that's wrong — it is the variables.tableName property on the query builder component itself.
+---
 
-The generated SQL was:
+## Setup
+
+### 1. Deploy the code (with dependencies)
+
+The framework dependencies (`coldbox/` and `modules/` — ColdBox + stock Quick/qb/mementifier)
+are **not committed** to git. Populate them once with CommandBox before deploying:
+
+```bat
+box install
+```
+
+This downloads ColdBox into `coldbox/` and Quick (plus qb, mementifier, etc.) into `modules/`.
+Then copy the **entire folder — including `coldbox/` and `modules/`** — to your ACF webroot
+(IIS site root). The application bootstraps ColdBox via `Application.cfc`; there is no compile
+step. (If you received this as a zip that already contains `coldbox/` and `modules/`, you can
+skip `box install`.)
+
+### 2. Create the database
+
+Create an empty database (the examples assume one named `adobe-temp`), then load the schema:
+
+```bat
+sqlcmd -S localhost,1433 -U sa -P <password> -d adobe-temp -i resources\schema.sql
+```
+
+This creates two independent parent/child pairs with **differently-named FK columns**
+(`alpha_child.alpha_parent_id`, `bravo_child.bravo_parent_id`) and seeds a few rows. The
+differing FK names are what make contamination self-evident: a contaminated `UPDATE` aimed
+at the wrong child table references a column that table does not have, so SQL Server raises
+`Invalid column name ...` — exactly mirroring production (`user_type` had no `remoteAppId`).
+
+### 3. Create the `adobe-temp` datasource (IIS / standalone ACF)
+
+In the **ColdFusion Administrator** → **Data & Services → Data Sources**, add:
+
+| Field | Value |
+|-------|-------|
+| Data Source Name | `adobe-temp` |
+| Driver | Microsoft SQL Server |
+| Database | `adobe-temp` (your DB name) |
+| Server / Host | `localhost` (or your SQL host) |
+| Port | `1433` |
+| Username / Password | your SQL credentials |
+
+The application reads `this.datasource = "adobe-temp"` (in `Application.cfc`), so the
+datasource **name must be `adobe-temp`**. Click *Submit* and verify the datasource reports
+*OK*.
+
+> Using a different DB or datasource name? Change the target DB in step 2 and the
+> `this.datasource` value in `Application.cfc` to match.
+
+### 4. (Optional) CommandBox instead of IIS
+
+If you have CommandBox, the datasource and SQL Server engine package are wired for you:
+
+```bat
+box install
+box server start
+```
+
+`server.json` targets `adobe@2023` and `.cfconfig.json` (auto-imported by
+`commandbox-cfconfig`) defines the `adobe-temp` datasource from values in `.env`. Set your
+DB host/credentials in `.env` first (copy `.env.example`). The server listens on port
+`60830`.
+
+---
+
+## Running the reproduction
+
+Replace `<base>` with your server base URL (IIS: `http://localhost`; CommandBox:
+`http://localhost:60830`).
+
+### A. Single-threaded sanity check (should succeed)
 
 ```
-UPDATE [user_type] SET [remoteAppId] = NULL
-WHERE ([remoteAppId] = 168200 AND [remoteAppId] IS NOT NULL)
+GET <base>/repro/alpha
+GET <base>/repro/bravo
 ```
 
-What the SQL should have been:
+Each returns `{"ok":true,"childCount":3,...}` and runs the correct `UPDATE`. This confirms
+the harness and datasource work. `GET <base>/repro/status` shows the running contamination
+tally.
+
+### B. External HTTP load — the canonical method
+
+The defect is **request-scoped**, so drive real concurrent requests. Open **two terminals**
+and run simultaneously (using [bombardier](https://github.com/codesenberg/bombardier), a
+single Windows-friendly binary; `ab`/`hey` work too):
+
+```bat
+:: Terminal 1
+bombardier -n 200000 -c 100 "<base>/repro/alpha"
+
+:: Terminal 2
+bombardier -n 200000 -c 100 "<base>/repro/bravo"
+```
+
+### C. In-process stress (convenience)
 
 ```
-UPDATE [remote_app_remote_carrier] SET [remoteAppId] = NULL
-WHERE ([remoteAppId] = 168200 AND [remoteAppId] IS NOT NULL)
+GET <base>/repro/stress?entity=alpha&iterations=200
+GET <base>/repro/stress?entity=bravo&iterations=200
 ```
 
-### Key observations:
+Spawns up to 500 concurrent `cfthread`s, each constructing fresh transients and running the
+dissociate. Returns a JSON summary with `threadErrors` and sample messages. In the author's
+testing this reliably reproduced the corruption at ~4–7% of constructions — see
+[`docs/LOCAL_REPRODUCTION_RESULTS.md`](docs/LOCAL_REPRODUCTION_RESULTS.md).
 
-The user_type table does not have a remoteAppId column. This is what caused the database error. The column remoteAppId belongs to the remote_app_remote_carrier table.
+---
 
-The WHERE clause is correct for remote_app_remote_carrier. This means the query builder was initialized correctly — the constraints were applied against the right table and column. Only the variables.tableName property was overwritten sometime between initialization and query execution.
+## What success looks like
 
-The user_type table name comes from a completely unrelated entity (UserType.cfc) that was being accessed by a different concurrent request.
+Contamination events are written to **`logs/contamination_log.txt`**, one JSON object per
+line, tagged by type:
 
-The query builder is a transient — a new instance is created for each use via WireBox's getInstance(). It is not a singleton and should not be shared across requests.
+- `VARIABLES_SCOPE_CORRUPTION` — a transient's `variables` property held another instance's
+  value (e.g. `Element _STR is undefined in a Java object of type class [Ljava.lang.String;`).
+- `TABLE_NAME_CONTAMINATION` — an `UPDATE` hit the wrong table (`Invalid column name ...`),
+  the exact production symptom. Also flagged proactively by
+  `interceptors/ContaminationDetector.cfc` on qb's `preQBExecute`.
 
-The error is intermittent — it occurs only under concurrent load, typically a few times per day in production. It is not reproducible with a single request.
+Example:
 
-### Stack Trace
+```
+VARIABLES_SCOPE_CORRUPTION {"type":"VARIABLES_SCOPE_CORRUPTION","context":"stress(alpha)",
+"message":"Element _STR is undefined in a Java object of type class [Ljava.lang.String;.",
+"thread":"...","detectedAt":"2026-05-28 23:19:44.467"}
+```
 
-coldfusion.tagext.sql.QueryTag$DatabaseQueryException: Error Executing Database Query.
-  at cfBaseGrammar2ecfc$funcRUNQUERY.runFunction(BaseGrammar.cfc:128)
-  at cfQueryBuilder2ecfc$funcRUNQUERY.runFunction(QueryBuilder.cfc:4332)
-  at cfQueryBuilder2ecfc$funcUPDATE.runFunction(QueryBuilder.cfc:3404)
-  at cfQuickQB2ecfc$funcUPDATE.runFunction(QuickQB.cfc:314)
-  at cfQuickBuilder2ecfc$funcUPDATEALL.runFunction(QuickBuilder.cfc:441)
-  at cfHasOneOrMany2ecfc$funcAPPLYSETTER.runFunction(HasOneOrMany.cfc:273)
-  at cfBaseEntity2ecfc$funcTRYRELATIONSHIPSETTER.runFunction(BaseEntity.cfc:2550)
-  at cfBaseEntity2ecfc$funcONMISSINGMETHOD.runFunction(BaseEntity.cfc:2392)
+Any entry, or any non-zero `threadErrors` / `/repro/status` count, is a positive
+reproduction. A single request never produces these; they appear only under concurrency.
 
-## Why I Believe This Is an Engine Bug
+If you see **nothing** after sustained load, the timing window simply isn't opening on that
+hardware — note CPU core count, bare-metal vs VM, request volume, and duration, and see the
+forensic docs, which stand on their own.
 
-All components involved are transients, created fresh per request/use via a dependency injection framework (WireBox). There is no application-scoped or singleton sharing of these instances.
+---
 
-The contamination crosses component instance boundaries. A variables.tableName property on one CFC instance contains a value that was set on a completely different CFC instance in a concurrent request.
+## Repository layout
 
-Two distinct contamination vectors have been observed on the same engine version:
+```
+Application.cfc                     ColdBox bootstrap; this.datasource = "adobe-temp"
+config/Coldbox.cfc                  pins SqlServerGrammar@qb; registers the detector
+config/Router.cfc                   /repro/* routes
+models/AlphaParent|AlphaChild       entity pair A  (alpha_child.alpha_parent_id)
+models/BravoParent|BravoChild       entity pair B  (bravo_child.bravo_parent_id)
+handlers/Repro.cfc                  alpha / bravo / status / stress endpoints + logging
+interceptors/ContaminationDetector  preQBExecute table/column-prefix mismatch detector
+resources/schema.sql                SQL Server schema + seed
+logs/contamination_log.txt          created at runtime when contamination is detected
+docs/                               forensic write-up (below)
+```
 
-Closure captured scope (this) resolving to the wrong component instance
-Component variables-scoped property containing a value from a different instance
+### Documentation
 
-Both issues are intermittent and only manifest under concurrent request load — the classic signature of a thread-safety / memory model issue in the engine's runtime.
+- [`docs/PRODUCTION_EVIDENCE.md`](docs/PRODUCTION_EVIDENCE.md) — real SQL, stack trace, env.
+- [`docs/BUG_EXPLANATION.md`](docs/BUG_EXPLANATION.md) — root-cause analysis.
+- [`docs/LOCAL_REPRODUCTION_RESULTS.md`](docs/LOCAL_REPRODUCTION_RESULTS.md) — observed rates.
+- [`docs/INVESTIGATION_LOG.md`](docs/INVESTIGATION_LOG.md) — discovery timeline.
 
-The same application code runs without these issues on Lucee Server, where the ORM framework (Quick) is also widely used. This points to an ACF-specific runtime issue rather than an application logic bug.
+---
 
-The behavior is consistent with improper JVM memory fencing — the CFML engine may be allowing stale or cross-thread reads of component instance data, or the compiled Java bytecode for CFC instances may be sharing references that should be thread-local.
+## Notes
 
-## Our Workarounds
-
-We have applied defensive vendor patches to the ORM framework to re-assert correct state immediately before query execution:
-
-Closure contamination: Replaced closure-based column formatting with a direct object reference
-Table name contamination: Added variables.qb.from( getEntity().tableName() ) calls immediately before update() and delete() execution to re-assert the correct table name from the entity's metadata (which is set during entity init from CFC annotations and appears immune to contamination)
-
-Even though these workarounds appear to be working, we would prefer a proper engine-level resolution.
-
-## Request
-
-Can you please investigate whether ACF 2023 has a known thread-safety issue with CFC variables scope or closure captured scope under concurrent requests?
-
-Is there an existing hotfix or update that addresses this class of issue?
-
-If this is a new finding, can we open a formal bug report to track a fix? ACF 2023 is currently a supported product and we are a paying customer relying on it in production.
-
-Can you provide any guidance on JVM flags, garbage collector settings, or other configuration that might reduce the frequency of this issue while awaiting a proper fix?
-
-I'm happy to provide additional details, FusionReactor captures, thread dumps, or heap dumps if that would help your investigation.
+- Quick is installed **stock and unpatched** from ForgeBox; the production vendor
+  workarounds are intentionally **absent** so the raw engine behavior is observable.
+- The same application code runs without these issues on Lucee Server.
+- Questions / additional captures (FusionReactor, thread/heap dumps) available on request —
+  contact: dave@angrysam.com.

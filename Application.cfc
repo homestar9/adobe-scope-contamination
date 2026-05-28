@@ -12,7 +12,10 @@ component {
 	 * --------------------------------------------------------------------------
 	 */
 	this.name                 = "My ColdBox Application";
-	this.sessionManagement    = true;
+	// Sessions are irrelevant to this concurrency reproduction and load tools (bombardier/ab)
+	// send no CFID/CFTOKEN, so each request would otherwise mint a fresh session. Disabling
+	// keeps the stress purely on concurrent request threads, where the bug manifests.
+	this.sessionManagement    = false;
 	this.sessionTimeout       = createTimespan( 0, 1, 0, 0 );
 	this.setClientCookies     = true;
 	this.setDomainCookies     = true;
@@ -65,8 +68,9 @@ component {
 
 	/**
 	 * --------------------------------------------------------------------------
-	 * ORM + Datasource Settings
+	 * Datasource Settings
 	 * --------------------------------------------------------------------------
+	 * Uses the "adobe-temp" datasource configured in the ColdFusion Administrator.
 	 */
 	this.datasource = "adobe-temp";
 

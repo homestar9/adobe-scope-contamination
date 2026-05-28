@@ -123,7 +123,11 @@ component {
 		 * --------------------------------------------------------------------------
 		 * Remember that the order of declaration is the order they will be registered and fired
 		 */
-		variables.interceptors = [];
+		variables.interceptors = [
+			// Listens on qb's preQBExecute to flag any UPDATE whose target-table
+			// prefix disagrees with its SET-column prefix (scope contamination).
+			{ class : "interceptors.ContaminationDetector" }
+		];
 
 		/**
 		 * --------------------------------------------------------------------------
@@ -138,7 +142,11 @@ component {
 		 *
 		 * }
 		 */
-		variables.moduleSettings = {};
+		variables.moduleSettings = {
+			// Pin the SQL Server grammar so generated SQL uses [bracket] quoting,
+			// matching the production evidence (UPDATE [user_type] SET ...).
+			qb : { defaultGrammar : "SqlServerGrammar@qb" }
+		};
 
 		/**
 		 * --------------------------------------------------------------------------
