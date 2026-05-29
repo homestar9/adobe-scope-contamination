@@ -159,6 +159,12 @@ component extends="coldbox.system.RestHandler" {
 			// A BaseEntity's variables-scoped property resolved to another
 			// instance's value during concurrent transient construction.
 			type = "VARIABLES_SCOPE_CORRUPTION";
+		} else if ( haystack contains "method does not exist on querybuilder" || haystack contains "couldn't figure out what to do with" ) {
+			// The entity's cached metadata (variables._meta) resolved to another
+			// instance, so hasRelationship() could not see the entity's own
+			// relationship -> onMissingMethod forwarded the setter to qb, which has
+			// no such method. Same variables-scope defect, different victim property.
+			type = "VARIABLES_SCOPE_CORRUPTION";
 		}
 
 		if ( !len( type ) ) {

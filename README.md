@@ -160,10 +160,23 @@ Contamination events are written to **`logs/contamination_log.txt`**, one JSON o
 line, tagged by type:
 
 - `VARIABLES_SCOPE_CORRUPTION` — a transient's `variables` property held another instance's
-  value (e.g. `Element _STR is undefined in a Java object of type class [Ljava.lang.String;`).
+  value. Two observed faces of this, same root cause:
+  - the entity's injected `_str` helper resolved to an unrelated value:
+    `Element _STR is undefined in a Java object of type class [Ljava.lang.String;`.
+  - the entity's cached metadata (`variables._meta`) crossed instances, so Quick could not
+    find the entity's own relationship and forwarded the call to qb:
+    `Quick couldn't figure out what to do with [setAlphaChildren]... Method does not exist on
+    QueryBuilder [setAlphaChildren]`.
 - `TABLE_NAME_CONTAMINATION` — an `UPDATE` hit the wrong table (`Invalid column name ...`),
   the exact production symptom. Also flagged proactively by
   `interceptors/ContaminationDetector.cfc` on qb's `preQBExecute`.
+
+> **Reading the counters.** The `contaminations` field (in `/repro/status` and the stress
+> JSON) counts **only** `TABLE_NAME_CONTAMINATION`, which `ContaminationDetector` catches at
+> qb's `preQBExecute`. The `VARIABLES_SCOPE_CORRUPTION` manifestations fail *before* any SQL
+> is generated, so they surface in `threadErrors` and in `logs/contamination_log.txt` — **not**
+> in the `contaminations` counter. A non-zero `threadErrors`, or any line in the log, is a
+> positive reproduction even when `contaminations` reads `0`.
 
 Example:
 

@@ -97,6 +97,31 @@ VARIABLES_SCOPE_CORRUPTION {"type":"VARIABLES_SCOPE_CORRUPTION","context":"stres
 "thread":"...","detectedAt":"..."}
 ```
 
+### A second face of the same corruption — relationship lookup fails
+
+The same stress mode also intermittently produces a different message for the same root cause:
+
+```
+Quick couldn't figure out what to do with [setAlphaChildren]. The error returned was:
+Method does not exist on QueryBuilder [setAlphaChildren] ...
+```
+
+Here `variables._str` survived but the entity's cached metadata did not. `hasRelationship()`
+iterates `variables._meta.functionNames` (`BaseEntity.cfc`); when that transient's `_meta`
+holds another concurrent instance's value, the entity cannot see its own `alphaChildren`
+relationship, so `onMissingMethod` falls through and forwards the setter to qb — which has no
+`setAlphaChildren` and throws. Same defect (a `variables`-scoped property holding another
+instance's value), different victim property (`_meta` instead of `_str`). Which property loses
+the race is timing-dependent.
+
+These are also tagged `VARIABLES_SCOPE_CORRUPTION` in `logs/contamination_log.txt`.
+
+> **Reading the counters:** `/repro/status` and the stress JSON `contaminations` field counts
+> only `TABLE_NAME_CONTAMINATION` (caught at qb's `preQBExecute`). Both `VARIABLES_SCOPE_CORRUPTION`
+> faces above fail *before* any SQL is generated, so they show up in `threadErrors` and in the
+> log file, not in `contaminations` — a run can show `threadErrors: 9, contaminations: 0` and
+> still be a positive reproduction.
+
 ## Notes / caveats
 
 - **Both** manifestations reproduce locally on stock Quick + ACF 2023:

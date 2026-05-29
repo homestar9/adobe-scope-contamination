@@ -60,6 +60,13 @@ unrelated value (`Element _STR is undefined in a Java object of type class [Ljav
 That is a `variables`-scoped property holding another instance's value — the same fault as
 the production table-name contamination, surfaced on a different property.
 
+The same crossing has also been observed on the entity's cached metadata, `variables._meta`.
+`hasRelationship()` iterates `variables._meta.functionNames`; when `_meta` holds another
+concurrent instance's value, the entity cannot see its own relationship, so `onMissingMethod`
+forwards the setter to qb and ACF throws `Quick couldn't figure out what to do with
+[setAlphaChildren]... Method does not exist on QueryBuilder [setAlphaChildren]`. Same root
+cause again, a third victim property — which one loses the race is timing-dependent.
+
 ## Why it is intermittent
 
 It requires a specific interleaving of concurrent CFC construction / scope assignment.
