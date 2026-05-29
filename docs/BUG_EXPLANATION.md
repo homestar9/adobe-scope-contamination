@@ -67,6 +67,32 @@ forwards the setter to qb and ACF throws `Quick couldn't figure out what to do w
 [setAlphaChildren]... Method does not exist on QueryBuilder [setAlphaChildren]`. Same root
 cause again, a third victim property — which one loses the race is timing-dependent.
 
+## Engine-level evidence — NPE inside ACF's `ObjectDuplicator`
+
+Under the same concurrent load, the harness's full-error capture (`logs/repro_errors.txt`)
+recorded an `UNCLASSIFIED` `java.lang.NullPointerException` thrown **inside ACF's own runtime**
+while a transient was being constructed:
+
+```
+java.lang.NullPointerException
+  at coldfusion.util.CaseInsensitiveMap$ScopeIterator$ScopeEntry.getKey(CaseInsensitiveMap.java:482)
+  at coldfusion.runtime.ObjectDuplicator._duplicate(ObjectDuplicator.java:156)
+  at coldfusion.runtime.ObjectDuplicator.duplicate(ObjectDuplicator.java:80)
+  ...
+  at cf...BaseEntity.cfc:2727  (metadataInspection -> Duplicate())
+  at cf...BaseEntity.cfc:293   (onDIComplete)
+```
+
+`BaseEntity.metadataInspection()` calls CF's `Duplicate()` on the entity metadata during
+`onDIComplete`. The NPE is raised by `CaseInsensitiveMap.ScopeEntry.getKey()` returning `null`
+**mid-duplication** — i.e. a map entry's key vanished while ACF was iterating/copying it. A key
+cannot legitimately become `null` during a single-threaded copy; this is direct evidence that
+**another thread mutated the same backing map while the engine was duplicating it**. That is
+the root-cause mechanism behind all three application-level signatures above: shared component
+state is not being isolated per instance/thread during concurrent transient construction. It is
+an engine fault surfacing in stock CF runtime classes (`ObjectDuplicator`, `CaseInsensitiveMap`),
+not in Quick or application code.
+
 ## Why it is intermittent
 
 It requires a specific interleaving of concurrent CFC construction / scope assignment.

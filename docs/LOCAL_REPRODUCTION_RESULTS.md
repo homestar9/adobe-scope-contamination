@@ -46,8 +46,26 @@ fresh WireBox transients — i.e. the `variables.tableName` on a transient query
 contaminated by a concurrent request. This is identical in shape to the production failure
 (`UPDATE [user_type] SET [remoteAppId] ...`, where `user_type` lacks `remoteAppId`).
 
-Rate is hardware- and load-dependent; higher concurrency raises it. Run longer / wider for
-more events.
+The same result reproduces with **bombardier** at a calibrated load — two terminals, one per
+endpoint:
+
+```
+bombardier -c 20 -n 3000 -t 30s "http://127.0.0.1:60830/repro/alpha"
+bombardier -c 20 -n 3000 -t 30s "http://127.0.0.1:60830/repro/bravo"
+```
+
+A single 3000-request alpha run returned **2956 `2xx` / 44 `5xx` (~1.5%)**, and
+`contamination_log.txt` captured 30+ interceptor `CONTAMINATION #N` lines with the cross-wired
+SQL (e.g. `UPDATE [alpha_child] SET [bravo_parent_id] = ? ...`), the matching
+`TABLE_NAME_CONTAMINATION` SQL errors, and `VARIABLES_SCOPE_CORRUPTION` events — all three
+signatures in one run.
+
+Rate is hardware- and load-dependent, but note: with these **write-contended** endpoints,
+*more* concurrency does not mean more events. Past roughly ACF's max-simultaneous-request
+limit (~25), extra connections only saturate the request queue, the DB connection pool, and
+the OS socket table — requests time out and the effective hit rate drops to zero (and sustained
+abuse can crash the servlet deployment). `-c 20` per endpoint is the sweet spot; step to
+`-c 30–40` only while `2xx` still dominates the histogram.
 
 ## Concurrent `cfthread` stress (variables-scope corruption reproduced)
 

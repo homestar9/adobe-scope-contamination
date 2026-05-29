@@ -64,6 +64,8 @@ component extends="coldbox.system.RestHandler" {
 				} catch ( any e ) {
 					thread.errored = e.message;
 					thread.erroredDetail = e.keyExists( "detail" ) ? e.detail : "";
+					thread.erroredType = e.keyExists( "type" ) ? e.type : "";
+					thread.erroredStack = e.keyExists( "stackTrace" ) ? e.stackTrace : "";
 				}
 			}
 		}
@@ -77,7 +79,9 @@ component extends="coldbox.system.RestHandler" {
 				recordCorruption(
 					"stress(#entity#)",
 					cfthread[ tName ].errored,
-					structKeyExists( cfthread[ tName ], "erroredDetail" ) ? cfthread[ tName ].erroredDetail : ""
+					structKeyExists( cfthread[ tName ], "erroredDetail" ) ? cfthread[ tName ].erroredDetail : "",
+					structKeyExists( cfthread[ tName ], "erroredType" ) ? cfthread[ tName ].erroredType : "",
+					structKeyExists( cfthread[ tName ], "erroredStack" ) ? cfthread[ tName ].erroredStack : ""
 				);
 			}
 		}
@@ -118,13 +122,16 @@ component extends="coldbox.system.RestHandler" {
 		} catch ( any e ) {
 			// A contaminated UPDATE targets the wrong table, which lacks the FK
 			// column -> SQL Server "Invalid column name ..." (mirrors production).
-			// recordCorruption only logs recognised concurrency-corruption
-			// signatures; benign failures (e.g. a missing datasource) are returned
-			// but not logged as corruption.
+			// recordCorruption classifies known concurrency-corruption signatures for
+			// the contamination log, but now logs EVERY failure (with type + stack) to
+			// logs/repro_errors.txt so an unrecognised error (e.g. a dead servlet
+			// deployment, a missing datasource) is never silently swallowed.
 			var classified = recordCorruption(
 				arguments.expectedTable,
 				e.message,
-				e.keyExists( "detail" ) ? e.detail : ""
+				e.keyExists( "detail" ) ? e.detail : "",
+				e.keyExists( "type" ) ? e.type : "",
+				e.keyExists( "stackTrace" ) ? e.stackTrace : ""
 			);
 			arguments.event.setHTTPHeader( statusCode = 500, statusText = "Repro Error" );
 			return {
@@ -132,6 +139,7 @@ component extends="coldbox.system.RestHandler" {
 				"entity"        : arguments.entityName,
 				"expectedTable" : arguments.expectedTable,
 				"corruption"    : classified,
+				"errorType"     : e.keyExists( "type" ) ? e.type : "",
 				"error"         : e.message,
 				"detail"        : e.keyExists( "detail" ) ? e.detail : "",
 				"thread"        : getThreadName()
@@ -140,16 +148,26 @@ component extends="coldbox.system.RestHandler" {
 	}
 
 	/**
-	 * Classifies an error message/detail and, if it matches a known concurrency
-	 * corruption signature, appends a structured event to logs/contamination_log.txt.
+	 * Classifies an error and records it. EVERY failure is appended to
+	 * logs/repro_errors.txt (with exception type + stack) so nothing is ever
+	 * silently swallowed; recognised concurrency-corruption signatures are
+	 * ALSO appended to logs/contamination_log.txt (the clean reproduction signal).
 	 *
 	 * Returns the corruption type ("TABLE_NAME_CONTAMINATION",
-	 * "VARIABLES_SCOPE_CORRUPTION") or "" when the error is not corruption.
+	 * "VARIABLES_SCOPE_CORRUPTION") or "" when the error is not a known corruption.
 	 *
-	 * @context  Where the error came from (entity/endpoint label).
+	 * @context     Where the error came from (entity/endpoint label).
+	 * @errType     The exception type (cfcatch.type), when available.
+	 * @stacktrace  The exception stack trace (cfcatch.stackTrace), when available.
 	 */
-	private string function recordCorruption( required string context, required string message, string detail = "" ) {
-		var haystack = lCase( arguments.message & " " & arguments.detail );
+	private string function recordCorruption(
+		required string context,
+		required string message,
+		string detail = "",
+		string errType = "",
+		string stacktrace = ""
+	) {
+		var haystack = lCase( arguments.message & " " & arguments.detail & " " & arguments.errType );
 		var type     = "";
 
 		if ( haystack contains "invalid column name" || haystack contains "invalid object name" ) {
@@ -167,23 +185,40 @@ component extends="coldbox.system.RestHandler" {
 			type = "VARIABLES_SCOPE_CORRUPTION";
 		}
 
-		if ( !len( type ) ) {
-			return "";
-		}
-
 		var logDir = expandPath( "/logs" );
 		if ( !directoryExists( logDir ) ) {
 			directoryCreate( logDir );
 		}
+
 		var evt = {
 			"detectedAt" : dateTimeFormat( now(), "yyyy-mm-dd HH:nn:ss.lll" ),
-			"type"       : type,
+			"type"       : len( type ) ? type : "UNCLASSIFIED",
 			"context"    : arguments.context,
 			"thread"     : getThreadName(),
+			"errType"    : arguments.errType,
+			"message"    : arguments.message,
+			"detail"     : arguments.detail,
+			"stacktrace" : left( arguments.stacktrace, 2000 )
+		};
+
+		// Forensic capture of EVERY failure (classified or not).
+		fileAppend( logDir & "/repro_errors.txt", evt.type & " " & serializeJSON( evt ) & chr( 10 ), "UTF-8" );
+
+		if ( !len( type ) ) {
+			return "";
+		}
+
+		// Recognised corruption only -> the clean reproduction signal. Keep this
+		// entry slim (no stack) to preserve the documented contamination_log format.
+		var corruptionEvt = {
+			"detectedAt" : evt.detectedAt,
+			"type"       : type,
+			"context"    : arguments.context,
+			"thread"     : evt.thread,
 			"message"    : arguments.message,
 			"detail"     : arguments.detail
 		};
-		fileAppend( logDir & "/contamination_log.txt", type & " " & serializeJSON( evt ) & chr( 10 ), "UTF-8" );
+		fileAppend( logDir & "/contamination_log.txt", type & " " & serializeJSON( corruptionEvt ) & chr( 10 ), "UTF-8" );
 		return type;
 	}
 

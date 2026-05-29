@@ -128,17 +128,33 @@ tally.
 
 ### B. External HTTP load — the canonical method
 
-The defect is **request-scoped**, so drive real concurrent requests. Open **two terminals**
-and run simultaneously (using [bombardier](https://github.com/codesenberg/bombardier), a
-single Windows-friendly binary; `ab`/`hey` work too):
+The defect is **request-scoped**, so drive real concurrent requests against **both** entities
+at once. Open **two terminals** and run simultaneously (using
+[bombardier](https://github.com/codesenberg/bombardier), a single Windows-friendly binary;
+`ab`/`hey` work too):
 
 ```bat
 :: Terminal 1
-bombardier -n 200000 -c 100 "<base>/repro/alpha"
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/alpha"
 
 :: Terminal 2
-bombardier -n 200000 -c 100 "<base>/repro/bravo"
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/bravo"
 ```
+
+This calibration reliably reproduces the defect at **~1–2% of requests** (mostly `2xx` with a
+small slice of `5xx`) and surfaces every signature below — including the contaminated
+`UPDATE` SQL caught proactively by the interceptor.
+
+> **Do not over-drive it.** These endpoints *write* (each request nulls and re-associates the
+> child FKs), so they contend on the same rows. Hammering with high concurrency (e.g.
+> `-c 100`) does **not** raise the hit rate — it saturates the ACF request queue, the SQL
+> Server connection pool, and Windows' ephemeral ports, so requests time out, throughput
+> collapses, and under sustained abuse the servlet deployment can fall over (every request
+> then returns `500` with an empty error). If your bombardier histogram fills with `timeout`
+> / `others` instead of `2xx`, you've passed the useful range — **lower `-c`**, don't raise
+> it. `-c 20` per endpoint (≈ ACF's default max simultaneous requests) is the sweet spot; step
+> up to `-c 30–40` only while `2xx` still dominates. Restart the server if a prior run wedged
+> it (`box server restart`).
 
 ### C. In-process stress (convenience)
 
@@ -178,16 +194,33 @@ line, tagged by type:
 > in the `contaminations` counter. A non-zero `threadErrors`, or any line in the log, is a
 > positive reproduction even when `contaminations` reads `0`.
 
-Example:
+The most direct evidence is the interceptor's `CONTAMINATION #N` line, which captures the
+**actual contaminated SQL** before SQL Server errors — note the table and the SET column
+disagree (`alpha_child` being SET with `bravo_parent_id`):
 
 ```
-VARIABLES_SCOPE_CORRUPTION {"type":"VARIABLES_SCOPE_CORRUPTION","context":"stress(alpha)",
-"message":"Element _STR is undefined in a Java object of type class [Ljava.lang.String;.",
-"thread":"...","detectedAt":"2026-05-28 23:19:44.467"}
+CONTAMINATION #1 {"targetTable":"alpha_child","setColumn":"bravo_parent_id",
+"sql":"UPDATE [alpha_child] SET [bravo_parent_id] = ?, [name] = ? WHERE ([alpha_child].[id] = ?)",
+"thread":"XNIO-1 task-43","detectedAt":"..."}
+
+TABLE_NAME_CONTAMINATION {"type":"TABLE_NAME_CONTAMINATION","context":"bravo_child",
+"message":"Error Executing Database Query.","detail":"...Invalid column name 'bravo_parent_id'.",
+"thread":"XNIO-1 task-43"}
 ```
 
 Any entry, or any non-zero `threadErrors` / `/repro/status` count, is a positive
 reproduction. A single request never produces these; they appear only under concurrency.
+
+### Full error capture — `logs/repro_errors.txt`
+
+Alongside the clean `contamination_log.txt` signal, the harness writes **every** request/thread
+failure — classified or not — to **`logs/repro_errors.txt`**, with the exception `errType`,
+message, detail, and stack trace (responses also gain an `errorType` field). Unrecognised
+failures are tagged `UNCLASSIFIED` so nothing is ever silently swallowed. This is where to look
+when a run misbehaves for reasons unrelated to contamination (a dead datasource, a wedged
+servlet deployment, etc.), and it has also surfaced an engine-level root-cause artifact — a
+`java.lang.NullPointerException` inside ACF's own `ObjectDuplicator` while `onDIComplete`
+duplicates the entity metadata under concurrency.
 
 If you see **nothing** after sustained load, the timing window simply isn't opening on that
 hardware — note CPU core count, bare-metal vs VM, request volume, and duration, and see the
@@ -207,6 +240,7 @@ handlers/Repro.cfc                  alpha / bravo / status / stress endpoints + 
 interceptors/ContaminationDetector  preQBExecute table/column-prefix mismatch detector
 resources/schema.sql                SQL Server schema + seed
 logs/contamination_log.txt          created at runtime when contamination is detected
+logs/repro_errors.txt               created at runtime; full capture of EVERY failure + stack
 docs/                               forensic write-up (below)
 ```
 
