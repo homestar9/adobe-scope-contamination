@@ -1,202 +1,81 @@
-# ACF 2023 — CFC `variables`-Scope / Closure Contamination Under Concurrency
+# ACF 2023 — CFC `variables`-scope contamination under concurrency
 
-A minimal, deployable reproduction harness for an intermittent **Adobe ColdFusion 2023**
-concurrency defect: under concurrent request load, a **transient CFC's `variables`-scoped
-state is contaminated by a different concurrent instance**. In production this caused a
-Quick ORM query builder's table name to be overwritten by an unrelated entity's table,
-producing SQL like `UPDATE [user_type] ...` when it should have been
-`UPDATE [remote_app_remote_carrier] ...`.
+Under concurrent request load, Adobe ColdFusion 2023 intermittently lets a transient CFC's
+`variables`-scoped state get overwritten by a different concurrent instance. In production
+this overwrote a Quick ORM query builder's table name, so an `UPDATE` ran against the wrong
+table (`UPDATE [user_type] ...` instead of `UPDATE [remote_app_remote_carrier] ...`).
 
-This repo uses **stock, unpatched** ColdBox + Quick ORM against SQL Server and exercises the
-exact production code path. It is self-contained: two tiny entity pairs, a couple of
-endpoints, and built-in contamination detection/logging.
-
-> **TL;DR for Adobe:** deploy to ACF 2023, create the `adobe-temp` datasource, run
-> `resources/schema.sql`, then hammer `/repro/alpha` and `/repro/bravo` concurrently (or hit
-> `/repro/stress`). Watch `logs/contamination_log.txt`. Full forensic write-up is in
-> [`docs/`](docs/).
-
----
-
-## What you're looking for
-
-A transient CFC, freshly created per request via WireBox `getInstance()`, intermittently
-ends up with a `variables`-scoped property whose value belongs to a **different concurrent
-instance**. Two observed manifestations (same root cause):
-
-1. **Closure captured `this`** resolving to the wrong instance.
-2. **A `variables`-scoped property** (e.g. a query builder's `tableName`) holding another
-   instance's value.
-
-See [`docs/BUG_EXPLANATION.md`](docs/BUG_EXPLANATION.md) and
-[`docs/PRODUCTION_EVIDENCE.md`](docs/PRODUCTION_EVIDENCE.md).
-
----
+This is a self-contained reproduction: stock ColdBox + Quick ORM against SQL Server,
+exercising the same code path as production. The fastest way to see it is the quick start
+below. The forensic write-up is in [docs/](docs/).
 
 ## Prerequisites
 
-- Adobe ColdFusion 2023 (Update 18 / build 330879 is where production runs; any 2023 build
-  is fine).
-- Microsoft SQL Server reachable from the CF server.
-- The SQL Server JDBC driver available to CF (bundled with ACF; on a fresh install ensure
-  the `sqlserver` package is installed via `cfpm install sqlserver`).
+- Adobe ColdFusion 2023 (production runs Update 18 / build 330879; any 2023 build works).
+- SQL Server reachable from the CF server.
+- CommandBox (for the quick start). The SQL Server driver is installed automatically on
+  first server start.
 
----
+## Quick start (CommandBox)
 
-## Setup
+1. Install dependencies (ColdBox + Quick are not committed to git):
 
-### 1. Deploy the code (with dependencies)
+   ```bat
+   box install
+   ```
 
-The framework dependencies (`coldbox/` and `modules/` — ColdBox + stock Quick/qb/mementifier)
-are **not committed** to git. Populate them once with CommandBox before deploying:
+2. Copy `.env.example` to `.env` and set your SQL Server host and credentials.
 
-```bat
-box install
-```
+3. Create an empty database named `adobe-temp` and load the schema:
 
-This downloads ColdBox into `coldbox/` and Quick (plus qb, mementifier, etc.) into `modules/`.
-Then copy the **entire folder — including `coldbox/` and `modules/`** — to your ACF webroot
-(IIS site root). The application bootstraps ColdBox via `Application.cfc`; there is no compile
-step. (If you received this as a zip that already contains `coldbox/` and `modules/`, you can
-skip `box install`.)
+   ```bat
+   sqlcmd -S localhost,1433 -U sa -P <password> -d adobe-temp -i resources\schema.sql
+   ```
 
-### 2. Create the database
+   The schema creates two parent/child pairs with differently-named FK columns
+   (`alpha_child.alpha_parent_id`, `bravo_child.bravo_parent_id`). That difference is what
+   makes contamination obvious: an `UPDATE` retargeted to the wrong child table references a
+   column that table doesn't have, so SQL Server raises `Invalid column name ...`.
 
-Create an empty database (the examples assume one named `adobe-temp`), then load the schema:
+4. Start the server (listens on port `60830`, engine `adobe@2023`):
 
-```bat
-sqlcmd -S localhost,1433 -U sa -P <password> -d adobe-temp -i resources\schema.sql
-```
+   ```bat
+   box server start
+   ```
 
-This creates two independent parent/child pairs with **differently-named FK columns**
-(`alpha_child.alpha_parent_id`, `bravo_child.bravo_parent_id`) and seeds a few rows. The
-differing FK names are what make contamination self-evident: a contaminated `UPDATE` aimed
-at the wrong child table references a column that table does not have, so SQL Server raises
-`Invalid column name ...` — exactly mirroring production (`user_type` had no `remoteAppId`).
+5. Sanity check first — open these in a browser. Each returns `{"ok":true,"childCount":3,...}`:
 
-### 3. Create the `adobe-temp` datasource (IIS / standalone ACF)
+   ```text
+   http://localhost:60830/repro/alpha
+   http://localhost:60830/repro/bravo
+   ```
 
-In the **ColdFusion Administrator** → **Data & Services → Data Sources**, add:
+6. Reproduce it. Hit the stress endpoint once per entity (no extra tools needed):
 
-| Field | Value |
-|-------|-------|
-| Data Source Name | `adobe-temp` |
-| Driver | Microsoft SQL Server |
-| Database | `adobe-temp` (your DB name) |
-| Server / Host | `localhost` (or your SQL host) |
-| Port | `1433` |
-| Username / Password | your SQL credentials |
+   ```text
+   http://localhost:60830/repro/stress?entity=alpha&iterations=200
+   http://localhost:60830/repro/stress?entity=bravo&iterations=200
+   ```
 
-The application reads `this.datasource = "adobe-temp"` (in `Application.cfc`), so the
-datasource **name must be `adobe-temp`**. Click *Submit* and verify the datasource reports
-*OK*.
+   Each spawns up to 500 concurrent `cfthread`s building fresh transients. The JSON response
+   reports `threadErrors` and `contaminations`. Locally this reproduces at roughly 4–7% of
+   constructions.
 
-> Using a different DB or datasource name? Change the target DB in step 2 and the
-> `this.datasource` value in `Application.cfc` to match.
+## Reading the result
 
-### 4. (Optional) CommandBox instead of IIS
+A reproduction is positive if any of these is true: `threadErrors` is non-zero, `/repro/status`
+shows a non-zero count, or `logs/contamination_log.txt` has any line. A single, non-concurrent
+request never triggers it.
 
-If you have CommandBox, the datasource and SQL Server engine package are wired for you:
+`logs/contamination_log.txt` is the clean signal, one JSON object per line:
 
-```bat
-box install
-box server start
-```
-
-`server.json` targets `adobe@2023` and `.cfconfig.json` (auto-imported by
-`commandbox-cfconfig`) defines the `adobe-temp` datasource from values in `.env`. Set your
-DB host/credentials in `.env` first (copy `.env.example`). The server listens on port
-`60830`.
-
----
-
-## Running the reproduction
-
-Replace `<base>` with your server base URL (IIS: `http://localhost`; CommandBox:
-`http://localhost:60830`).
-
-### A. Single-threaded sanity check (should succeed)
-
-```
-GET <base>/repro/alpha
-GET <base>/repro/bravo
-```
-
-Each returns `{"ok":true,"childCount":3,...}` and runs the correct `UPDATE`. This confirms
-the harness and datasource work. `GET <base>/repro/status` shows the running contamination
-tally.
-
-### B. External HTTP load — the canonical method
-
-The defect is **request-scoped**, so drive real concurrent requests against **both** entities
-at once. Open **two terminals** and run simultaneously (using
-[bombardier](https://github.com/codesenberg/bombardier), a single Windows-friendly binary;
-`ab`/`hey` work too):
-
-```bat
-:: Terminal 1
-bombardier -c 20 -n 3000 -t 30s "<base>/repro/alpha"
-
-:: Terminal 2
-bombardier -c 20 -n 3000 -t 30s "<base>/repro/bravo"
-```
-
-This calibration reliably reproduces the defect at **~1–2% of requests** (mostly `2xx` with a
-small slice of `5xx`) and surfaces every signature below — including the contaminated
-`UPDATE` SQL caught proactively by the interceptor.
-
-> **Do not over-drive it.** These endpoints *write* (each request nulls and re-associates the
-> child FKs), so they contend on the same rows. Hammering with high concurrency (e.g.
-> `-c 100`) does **not** raise the hit rate — it saturates the ACF request queue, the SQL
-> Server connection pool, and Windows' ephemeral ports, so requests time out, throughput
-> collapses, and under sustained abuse the servlet deployment can fall over (every request
-> then returns `500` with an empty error). If your bombardier histogram fills with `timeout`
-> / `others` instead of `2xx`, you've passed the useful range — **lower `-c`**, don't raise
-> it. `-c 20` per endpoint (≈ ACF's default max simultaneous requests) is the sweet spot; step
-> up to `-c 30–40` only while `2xx` still dominates. Restart the server if a prior run wedged
-> it (`box server restart`).
-
-### C. In-process stress (convenience)
-
-```
-GET <base>/repro/stress?entity=alpha&iterations=200
-GET <base>/repro/stress?entity=bravo&iterations=200
-```
-
-Spawns up to 500 concurrent `cfthread`s, each constructing fresh transients and running the
-dissociate. Returns a JSON summary with `threadErrors` and sample messages. In the author's
-testing this reliably reproduced the corruption at ~4–7% of constructions — see
-[`docs/LOCAL_REPRODUCTION_RESULTS.md`](docs/LOCAL_REPRODUCTION_RESULTS.md).
-
----
-
-## What success looks like
-
-Contamination events are written to **`logs/contamination_log.txt`**, one JSON object per
-line, tagged by type:
-
+- `TABLE_NAME_CONTAMINATION` — an `UPDATE` hit the wrong table (the production symptom).
+  Caught proactively by `interceptors/ContaminationDetector.cfc` at qb's `preQBExecute`.
 - `VARIABLES_SCOPE_CORRUPTION` — a transient's `variables` property held another instance's
-  value. Two observed faces of this, same root cause:
-  - the entity's injected `_str` helper resolved to an unrelated value:
-    `Element _STR is undefined in a Java object of type class [Ljava.lang.String;`.
-  - the entity's cached metadata (`variables._meta`) crossed instances, so Quick could not
-    find the entity's own relationship and forwarded the call to qb:
-    `Quick couldn't figure out what to do with [setAlphaChildren]... Method does not exist on
-    QueryBuilder [setAlphaChildren]`.
-- `TABLE_NAME_CONTAMINATION` — an `UPDATE` hit the wrong table (`Invalid column name ...`),
-  the exact production symptom. Also flagged proactively by
-  `interceptors/ContaminationDetector.cfc` on qb's `preQBExecute`.
+  value (e.g. the injected `_str` helper, or cached `_meta`). These fail before any SQL runs.
 
-> **Reading the counters.** The `contaminations` field (in `/repro/status` and the stress
-> JSON) counts **only** `TABLE_NAME_CONTAMINATION`, which `ContaminationDetector` catches at
-> qb's `preQBExecute`. The `VARIABLES_SCOPE_CORRUPTION` manifestations fail *before* any SQL
-> is generated, so they surface in `threadErrors` and in `logs/contamination_log.txt` — **not**
-> in the `contaminations` counter. A non-zero `threadErrors`, or any line in the log, is a
-> positive reproduction even when `contaminations` reads `0`.
-
-The most direct evidence is the interceptor's `CONTAMINATION #N` line, which captures the
-**actual contaminated SQL** before SQL Server errors — note the table and the SET column
-disagree (`alpha_child` being SET with `bravo_parent_id`):
+The clearest evidence is the interceptor line, which captures the contaminated SQL before SQL
+Server errors — note the table and the SET column disagree:
 
 ```
 CONTAMINATION #1 {"targetTable":"alpha_child","setColumn":"bravo_parent_id",
@@ -204,29 +83,48 @@ CONTAMINATION #1 {"targetTable":"alpha_child","setColumn":"bravo_parent_id",
 "thread":"XNIO-1 task-43","detectedAt":"..."}
 
 TABLE_NAME_CONTAMINATION {"type":"TABLE_NAME_CONTAMINATION","context":"bravo_child",
-"message":"Error Executing Database Query.","detail":"...Invalid column name 'bravo_parent_id'.",
-"thread":"XNIO-1 task-43"}
+"detail":"...Invalid column name 'bravo_parent_id'.","thread":"XNIO-1 task-43"}
 ```
 
-Any entry, or any non-zero `threadErrors` / `/repro/status` count, is a positive
-reproduction. A single request never produces these; they appear only under concurrency.
+The `contaminations` counter only tracks `TABLE_NAME_CONTAMINATION`; the variables-scope
+faces surface in `threadErrors` and the log instead. See
+[docs/LOCAL_REPRODUCTION_RESULTS.md](docs/LOCAL_REPRODUCTION_RESULTS.md) for why a run can show
+`threadErrors: 9, contaminations: 0` and still be a positive hit.
 
-### Full error capture — `logs/repro_errors.txt`
+`logs/repro_errors.txt` separately captures every request/thread failure (classified or not)
+with exception type and stack trace, so unrelated problems (dead datasource, wedged servlet)
+aren't silently swallowed.
 
-Alongside the clean `contamination_log.txt` signal, the harness writes **every** request/thread
-failure — classified or not — to **`logs/repro_errors.txt`**, with the exception `errType`,
-message, detail, and stack trace (responses also gain an `errorType` field). Unrecognised
-failures are tagged `UNCLASSIFIED` so nothing is ever silently swallowed. This is where to look
-when a run misbehaves for reasons unrelated to contamination (a dead datasource, a wedged
-servlet deployment, etc.), and it has also surfaced an engine-level root-cause artifact — a
-`java.lang.NullPointerException` inside ACF's own `ObjectDuplicator` while `onDIComplete`
-duplicates the entity metadata under concurrency.
+If you see nothing after sustained load, the timing window isn't opening on that hardware.
+Note CPU core count, bare-metal vs VM, request volume, and duration; the docs stand on their own.
 
-If you see **nothing** after sustained load, the timing window simply isn't opening on that
-hardware — note CPU core count, bare-metal vs VM, request volume, and duration, and see the
-forensic docs, which stand on their own.
+## Alternative: IIS / standalone ACF, with HTTP load
 
----
+The defect is request-scoped, so concurrent HTTP requests against both entities is the test
+that most closely matches production.
+
+To deploy on IIS instead of CommandBox: run `box install`, copy the whole folder (including
+`coldbox/` and `modules/`) to the webroot, then add a datasource in the ColdFusion
+Administrator. The application reads `this.datasource = "adobe-temp"` from `Application.cfc`,
+so the datasource name **must be `adobe-temp`**: SQL Server driver, your host/port/credentials,
+database `adobe-temp`. (To use a different name, change `this.datasource` and the target DB to
+match.)
+
+Then drive both endpoints at once with [bombardier](https://github.com/codesenberg/bombardier)
+in two terminals (replace `<base>` with `http://localhost` on IIS or
+`http://localhost:60830` on CommandBox):
+
+```bat
+:: Terminal 1
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/alpha"
+:: Terminal 2
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/bravo"
+```
+
+This reproduces at ~1–2% of requests. These endpoints write and contend on the same rows, so
+more concurrency does not mean more hits — past ACF's max-simultaneous-request limit, requests
+just time out. `-c 20` per endpoint is the sweet spot; tuning details are in
+[docs/LOCAL_REPRODUCTION_RESULTS.md](docs/LOCAL_REPRODUCTION_RESULTS.md).
 
 ## Repository layout
 
@@ -239,24 +137,21 @@ models/BravoParent|BravoChild       entity pair B  (bravo_child.bravo_parent_id)
 handlers/Repro.cfc                  alpha / bravo / status / stress endpoints + logging
 interceptors/ContaminationDetector  preQBExecute table/column-prefix mismatch detector
 resources/schema.sql                SQL Server schema + seed
-logs/contamination_log.txt          created at runtime when contamination is detected
-logs/repro_errors.txt               created at runtime; full capture of EVERY failure + stack
-docs/                               forensic write-up (below)
+logs/                               contamination_log.txt + repro_errors.txt (created at runtime)
+docs/                               forensic write-up
 ```
 
-### Documentation
+## Documentation
 
-- [`docs/PRODUCTION_EVIDENCE.md`](docs/PRODUCTION_EVIDENCE.md) — real SQL, stack trace, env.
-- [`docs/BUG_EXPLANATION.md`](docs/BUG_EXPLANATION.md) — root-cause analysis.
-- [`docs/LOCAL_REPRODUCTION_RESULTS.md`](docs/LOCAL_REPRODUCTION_RESULTS.md) — observed rates.
-- [`docs/INVESTIGATION_LOG.md`](docs/INVESTIGATION_LOG.md) — discovery timeline.
-
----
+- [docs/PRODUCTION_EVIDENCE.md](docs/PRODUCTION_EVIDENCE.md) — real SQL, stack trace, environment.
+- [docs/BUG_EXPLANATION.md](docs/BUG_EXPLANATION.md) — root-cause analysis.
+- [docs/LOCAL_REPRODUCTION_RESULTS.md](docs/LOCAL_REPRODUCTION_RESULTS.md) — observed rates and tuning.
+- [docs/INVESTIGATION_LOG.md](docs/INVESTIGATION_LOG.md) — discovery timeline.
 
 ## Notes
 
-- Quick is installed **stock and unpatched** from ForgeBox; the production vendor
-  workarounds are intentionally **absent** so the raw engine behavior is observable.
+- ColdBox and Quick are the unmodified ForgeBox releases, so the behavior here is the
+  engine's, not a local patch.
 - The same application code runs without these issues on Lucee Server.
-- Questions / additional captures (FusionReactor, thread/heap dumps) available on request —
-  contact: dave@angrysam.com.
+- Questions or additional captures (FusionReactor, thread/heap dumps) on request:
+  <dave@angrysam.com>
