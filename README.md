@@ -16,6 +16,7 @@ below. The forensic write-up is in [docs/](docs/).
 - CommandBox (for the quick start). The SQL Server driver is installed automatically on
   first server start.
 - [bombardier](https://github.com/codesenberg/bombardier) (recommended) — drives the concurrent-HTTP load test.
+- [Fusionreactor](https://commandbox.ortusbooks.com/embedded-server/fusionreactor) (optional, but recommended) - Quickly see the contamination issue and wrong SQL statements generated. [Free Trial](https://fusion-reactor.com/) available.
 
 ## Quick start (CommandBox)
 
@@ -23,6 +24,7 @@ below. The forensic write-up is in [docs/](docs/).
 
    ```bat
    box install
+   box install commandbox-fusionreactor
    ```
 
 2. Copy `.env.example` to `.env` and set your SQL Server host and credentials.
@@ -51,18 +53,42 @@ below. The forensic write-up is in [docs/](docs/).
    http://localhost:60830/repro/bravo
    ```
 
-6. Reproduce it. Hit the stress endpoint once per entity (no extra tools needed):
+6. Reproduce it. See below.
 
-   ```text
-   http://localhost:60830/repro/stress?entity=alpha&iterations=200
-   http://localhost:60830/repro/stress?entity=bravo&iterations=200
-   ```
+## Reproduction Method 1: Bombardier
 
-   Each spawns up to 500 concurrent `cfthread`s building fresh transients. The JSON response
-   reports `threadErrors` and `contaminations`. Locally this reproduces at roughly 4–7% of
-   constructions.
+The defect is request-scoped, so concurrent HTTP requests against both entities is the test that most closely matches production.
 
-## Reading the result
+Drive both endpoints at once with [bombardier](https://github.com/codesenberg/bombardier)
+in two terminals (replace `<base>` with `http://localhost` on IIS or
+`http://localhost:60830` on CommandBox):
+
+```bat
+:: Terminal 1
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/alpha"
+:: Terminal 2
+bombardier -c 20 -n 3000 -t 30s "<base>/repro/bravo"
+```
+
+This reproduces at ~1–2% of requests. These endpoints write and contend on the same rows, so
+more concurrency does not mean more hits — past ACF's max-simultaneous-request limit, requests
+just time out. `-c 20` per endpoint is the sweet spot; tuning details are in
+[docs/LOCAL_REPRODUCTION_RESULTS.md](docs/LOCAL_REPRODUCTION_RESULTS.md).
+
+## Method 2: Built-In Stress Endpoint (CFThread)
+
+Hit the stress endpoint once per entity (no extra tools needed):
+
+```text
+http://localhost:60830/repro/stress?entity=alpha&iterations=200
+http://localhost:60830/repro/stress?entity=bravo&iterations=200
+```
+
+Each spawns up to 500 concurrent `cfthread`s building fresh transients. The JSON response
+reports `threadErrors` and `contaminations`. Locally this reproduces at roughly 4–7% of
+constructions.  You can also quickly view the contaminated queries in the FusionReactor dashboard (easiest method).
+
+## Reading the results
 
 A reproduction is positive if any of these is true: `threadErrors` is non-zero, `/repro/status`
 shows a non-zero count, or `logs/contamination_log.txt` has any line. A single, non-concurrent
@@ -97,35 +123,12 @@ with exception type and stack trace, so unrelated problems (dead datasource, wed
 aren't silently swallowed.
 
 If you see nothing after sustained load, the timing window isn't opening on that hardware.
-Note CPU core count, bare-metal vs VM, request volume, and duration; the docs stand on their own.
 
-## Alternative: IIS / standalone ACF, with HTTP load
+You can also quickly view the contaminated queries in the FusionReactor dashboard (see below).
 
-The defect is request-scoped, so concurrent HTTP requests against both entities is the test
-that most closely matches production.
+## Viewing Results in FusionReactor (easiest)
 
-To deploy on IIS instead of CommandBox: run `box install`, copy the whole folder (including
-`coldbox/` and `modules/`) to the webroot, then add a datasource in the ColdFusion
-Administrator. The application reads `this.datasource = "adobe-temp"` from `Application.cfc`,
-so the datasource name **must be `adobe-temp`**: SQL Server driver, your host/port/credentials,
-database `adobe-temp`. (To use a different name, change `this.datasource` and the target DB to
-match.)
-
-Then drive both endpoints at once with [bombardier](https://github.com/codesenberg/bombardier)
-in two terminals (replace `<base>` with `http://localhost` on IIS or
-`http://localhost:60830` on CommandBox):
-
-```bat
-:: Terminal 1
-bombardier -c 20 -n 3000 -t 30s "<base>/repro/alpha"
-:: Terminal 2
-bombardier -c 20 -n 3000 -t 30s "<base>/repro/bravo"
-```
-
-This reproduces at ~1–2% of requests. These endpoints write and contend on the same rows, so
-more concurrency does not mean more hits — past ACF's max-simultaneous-request limit, requests
-just time out. `-c 20` per endpoint is the sweet spot; tuning details are in
-[docs/LOCAL_REPRODUCTION_RESULTS.md](docs/LOCAL_REPRODUCTION_RESULTS.md).
+If you are using FusionReacactor (recommended), you can see the scope contamination by opening the FusionReactor dashboard (right-click on the taskbar's CF server icon and select "Open FusionReactor"). Then, using the left-hand menu, select JDBC > Error History.  You will see the contaminated queries appear there.
 
 ## Repository layout
 
@@ -153,6 +156,6 @@ docs/                               forensic write-up
 
 - ColdBox and Quick are the unmodified ForgeBox releases, so the behavior here is the
   engine's, not a local patch.
-- The same application code runs without these issues on Lucee Server.
-- Questions or additional captures (FusionReactor, thread/heap dumps) on request:
+- The same application code runs without these issues on Lucee or Boxlang Server.
+- Questions or additional support available on request:
   <dave@angrysam.com>
