@@ -15,9 +15,7 @@ below. The forensic write-up is in [docs/](docs/).
 - SQL Server reachable from the CF server.
 - CommandBox (for the quick start). The SQL Server driver is installed automatically on
   first server start.
-- [bombardier](https://github.com/codesenberg/bombardier) (optional) — drives the canonical
-  concurrent-HTTP load test. No bombardier? A plain `curl` + `xargs` one-liner does the same
-  job (shown below).
+- [bombardier](https://github.com/codesenberg/bombardier) (recommended) — drives the concurrent-HTTP load test.
 
 ## Quick start (CommandBox)
 
