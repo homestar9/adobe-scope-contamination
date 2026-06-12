@@ -31,10 +31,18 @@
     },
     "scripts":{
         "postInstall":"pathExists .env || cp .env.example .env && package set ignore=[]",
-        "docker:build":"!docker build --no-cache -t my-coldbox-app -f ./docker/Dockerfile ./",
-        "docker:run":"!docker run -it -p 8080:8080 my-coldbox-app",
-        "docker:bash":"!docker run -it my-coldbox-app /bin/bash",
-        "docker:stack":"!docker compose -f docker/docker-compose.yaml ${1}"
+        "start:boxlang" : "server start serverConfigFile=server-boxlang-cfml@1.json",
+        "start:lucee6" : "server start serverConfigFile=server-lucee@6.json",
+        "start:2023" : "server start serverConfigFile=server.json",
+        "start:2025" : "server start serverConfigFile=server-adobe@2025.json",
+        "stop:boxlang" : "server stop serverConfigFile=server-boxlang-cfml@1.json",
+        "stop:lucee6" : "server stop serverConfigFile=server-lucee@6.json",
+        "stop:2023" : "server stop serverConfigFile=server.json",
+        "stop:2025" : "server stop serverConfigFile=server-adobe@2025.json",
+        "forget:boxlang": "server forget serverConfigFile=server-boxlang-cfml@1.json",
+        "forget:lucee6": "server forget serverConfigFile=server-lucee@6.json",
+        "forget:2023": "server forget serverConfigFile=server.json",
+        "forget:2025": "server forget serverConfigFile=server-adobe@2025.json"
     },
     "testbox":{
         "runner":"/tests/runner.cfm"

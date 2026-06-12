@@ -1,0 +1,21 @@
+{
+    "name":"adobe-scope-contamination-lucee@6",
+    "app":{
+        "serverHomeDirectory":".engine/lucee6",
+        "cfengine":"lucee@6"
+    },
+    "web":{
+        "rewrites":{
+            "enable":true
+        },
+        "http":{
+            "port":"60830"
+        }
+    },
+    "fusionreactor":{
+        "enable":"true"
+    },
+    "cfconfig":{
+        "file":".cfconfig.json"
+    }
+}

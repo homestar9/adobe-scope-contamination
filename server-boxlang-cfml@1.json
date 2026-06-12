@@ -1,0 +1,30 @@
+{
+    "name":"adobe-scope-contamination-boxlang@1",
+    "app":{
+        "serverHomeDirectory":".engine/boxlang-cfml",
+        "cfengine":"boxlang@1"
+    },
+    "fusionreactor":{
+        "enable":true
+    },
+    "web":{
+        "rewrites":{
+            "enable":true
+        },
+        "http":{
+            "port":"60830"
+        }
+    },
+    "JVM":{
+        "heapSize":"768",
+        "javaVersion":"openjdk21_jre",
+        "args":"-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8888"
+    },
+    "cfconfig":{
+        "file":".cfconfig.json"
+    },
+    "env":{},
+    "scripts":{
+        "onServerInitialInstall":"install bx-compat-cfml --noSave && install bx-mssql --noSave"
+    }
+}
