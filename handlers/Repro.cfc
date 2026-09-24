@@ -29,6 +29,56 @@ component extends="coldbox.system.RestHandler" {
 		return runRepro( event, "BravoParent", "BravoChild", "bravoChildren", "bravo_child" );
 	}
 
+	/**
+	 * GET /repro/wire
+	 *
+	 * Contamination probe WITHOUT Quick and WITHOUT a shared base class. Each request builds six
+	 * unrelated transients (models/wire/WireProbeA..F) through WireBox, each with a per-request
+	 * token passed as a constructor argument, plus injected and nested WireHelper transients that
+	 * record the token. Then it checks that every value in every instance belongs to this request.
+	 * A mismatch is logged as WIRE_CROSSING in logs/contamination_log.txt and returns HTTP 500.
+	 *
+	 * Why: Adobe's v3 hotfix locks per class and per ancestor. The Quick workload (/repro/alpha +
+	 * /repro/bravo) only ever constructs classes that share BaseEntity and QuickQB locks, so it
+	 * cannot tell whether v3 protects constructions that share no lock. This one can.
+	 */
+	function wire( event, rc, prc ) {
+		var token    = createUUID();
+		var problems = [];
+		try {
+			for ( var k in [ "A", "B", "C", "D", "E", "F" ] ) {
+				var expected = token & "-" & k;
+				var probe    = getInstance( name = "models.wire.WireProbe" & k, initArguments = { "token" : expected } );
+				var r        = probe.report();
+				var bad      = [];
+				if ( r.kind != k )                                  bad.append( "kind=" & r.kind );
+				if ( r.token != expected )                          bad.append( "token=" & r.token );
+				if ( r.settingsKind != k )                          bad.append( "settingsKind=" & r.settingsKind );
+				if ( r.workerOwner != expected )                    bad.append( "workerOwner=" & r.workerOwner );
+				if ( r.helperOwner != expected )                    bad.append( "helperOwner=" & r.helperOwner );
+				if ( r.peerOwner != expected )                      bad.append( "peerOwner=" & r.peerOwner );
+				if ( listLast( r.metaName, "." ) != "WireProbe" & k ) bad.append( "metaName=" & r.metaName );
+				if ( bad.len() ) problems.append( "WireProbe#k# expected #expected#: " & bad.toList( ", " ) );
+			}
+		} catch ( any e ) {
+			var classified = recordCorruption(
+				"wire",
+				e.message,
+				e.keyExists( "detail" ) ? e.detail : "",
+				e.keyExists( "type" ) ? e.type : "",
+				e.keyExists( "stackTrace" ) ? e.stackTrace : ""
+			);
+			event.setHTTPHeader( statusCode = 500, statusText = "Repro Error" );
+			return { "ok" : false, "corruption" : classified, "error" : e.message, "thread" : getThreadName() };
+		}
+		if ( problems.len() ) {
+			var classified = recordCorruption( "wire", "WIRE_CROSSING " & problems.toList( " | " ) );
+			event.setHTTPHeader( statusCode = 500, statusText = "Repro Error" );
+			return { "ok" : false, "corruption" : classified, "problems" : problems, "thread" : getThreadName() };
+		}
+		return { "ok" : true, "probes" : 6, "thread" : getThreadName() };
+	}
+
 	// GET /repro/status — current contamination tally for this app instance
 	function status( event, rc, prc ) {
 		return {
@@ -170,7 +220,10 @@ component extends="coldbox.system.RestHandler" {
 		var haystack = lCase( arguments.message & " " & arguments.detail & " " & arguments.errType );
 		var type     = "";
 
-		if ( haystack contains "invalid column name" || haystack contains "invalid object name" ) {
+		if ( haystack contains "wire_crossing" ) {
+			// /repro/wire: a WireBox-built probe held a value that belongs to another request.
+			type = "WIRE_CROSSING";
+		} else if ( haystack contains "invalid column name" || haystack contains "invalid object name" ) {
 			// UPDATE hit the wrong table (it lacks the other entity's FK column).
 			type = "TABLE_NAME_CONTAMINATION";
 		} else if ( haystack contains "is undefined in a java object" || haystack contains "_str" ) {

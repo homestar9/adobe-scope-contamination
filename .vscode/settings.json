@@ -2,5 +2,6 @@
 	"boxlang.mappings": {
 		"/coldbox": "coldbox",
 		"/testbox": "testbox"
-    }
+    },
+    "boxlang.debugger.moduleVersion": "1.1.1+2"
 }

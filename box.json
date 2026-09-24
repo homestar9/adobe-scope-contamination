@@ -42,7 +42,13 @@
         "forget:boxlang": "server forget serverConfigFile=server-boxlang-cfml@1.json",
         "forget:lucee6": "server forget serverConfigFile=server-lucee@6.json",
         "forget:2023": "server forget serverConfigFile=server.json",
-        "forget:2025": "server forget serverConfigFile=server-adobe@2025.json"
+        "forget:2025": "server forget serverConfigFile=server-adobe@2025.json",
+        "start:bench-patched" : "server start serverConfigFile=server-bench-patched.json",
+        "start:bench-baseline" : "server start serverConfigFile=server-bench-baseline.json",
+        "stop:bench-patched" : "server stop serverConfigFile=server-bench-patched.json",
+        "stop:bench-baseline" : "server stop serverConfigFile=server-bench-baseline.json",
+        "forget:bench-patched" : "server forget serverConfigFile=server-bench-patched.json",
+        "forget:bench-baseline" : "server forget serverConfigFile=server-bench-baseline.json"
     },
     "testbox":{
         "runner":"/tests/runner.cfm"

@@ -1,0 +1,30 @@
+{
+    "name":"adobe-scope-contamination-bench-boxlang",
+    "web":{
+        "rewrites":{
+            "enable":true
+        },
+        "HTTP":{
+            "port":60851
+        }
+    },
+    "app":{
+        "serverHomeDirectory":".engine/bench-boxlang",
+        "cfengine":"boxlang@1"
+    },
+    "fusionreactor":{
+        "enable":false
+    },
+    "jvm":{
+        "javaVersion":"openjdk21_jdk",
+        "heapSize":"1024",
+        "minHeapSize":"1024",
+        "args":"-Dboxlang.trustedCache=true -Dboxlang.clearClassFilesOnStartup=true"
+    },
+    "cfconfig":{
+        "file":".cfconfig-bench-db.json"
+    },
+    "scripts":{
+        "onServerInitialInstall":"install bx-compat-cfml --noSave && install bx-mssql --noSave"
+    }
+}

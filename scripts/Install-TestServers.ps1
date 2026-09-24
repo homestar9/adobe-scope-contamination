@@ -1,0 +1,145 @@
+<#
+.SYNOPSIS
+    Installs, jars, starts and verifies the Update 23 benchmark test servers.
+
+.DESCRIPTION
+    Test servers come from scripts\TestServers.ps1 (the one table every script shares):
+
+        u23           60843   ACF 2023.0.23, no jar            stock reference
+        lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
+        buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
+        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (under test)
+
+    Flow: start each test server once so CommandBox installs the engine, stop them all (a jar copied
+    into a running server is not picked up), place each test server's pinned jar under the ORIGINAL
+    filename hf202300-4232227.jar, start them again, then prove each test server is what the table
+    says it is:
+
+      - /benchmark/engine classSources: TemplateProxyFactory from the hotfix jar or not;
+        TemplateProxy/UDFMethod/Closure from the hotfix jar (v1) or not (v3, stock);
+      - /benchmark/engine constructionLocks: the runtime lock fingerprint (global / perclass / none);
+      - the deployed jar's SHA256 equals the pinned constant for that test server;
+      - every test server on the same JVM.
+
+    Every jar SHA is a pinned constant. Nothing is ever hashed "from the source file" to decide
+    what it is.
+
+.PARAMETER Servers
+    Which test servers to handle. Default: every test server in TestServers.ps1 that is already
+    installed under .engine and is not opt-in (concmap-u23 is opt-in). A test server that has
+    never been installed must be named here the first time, e.g. -Servers lucee6,boxlang.
+    Other test servers are left untouched.
+
+.PARAMETER SkipInstall
+    Skip the initial start/stop cycle. Use when the engines are already installed; the
+    script still stops running test servers, places jars, starts and verifies.
+
+.PARAMETER ClearFelixCache
+    Delete each test server's felix-cache before starting. Repeated start/stop cycles can leave it
+    drifted, after which OSGi packages silently fail to install and the test server runs FASTER
+    than it should. Recommended before a measurement test run.
+
+.EXAMPLE
+    .\scripts\Install-TestServers.ps1
+.EXAMPLE
+    .\scripts\Install-TestServers.ps1 -SkipInstall -ClearFelixCache
+.EXAMPLE
+    .\scripts\Install-TestServers.ps1 -Servers perclass-u23
+#>
+[CmdletBinding()]
+param(
+    [string[]] $Servers = @(),
+    [switch]   $SkipInstall,
+    [switch]   $ClearFelixCache,
+    [string]   $OutputDir = ''
+)
+
+$ErrorActionPreference = 'Stop'
+. ( Join-Path $PSScriptRoot 'TestServers.ps1' )
+
+$serverSet = Select-TestServers -Names $Servers
+if ( -not $OutputDir ) { $OutputDir = Join-Path $BenchRepoRoot 'benchmark-results-u23\adobe-v3\identity' }
+
+# ---------------------------------------------------------------- source jars
+foreach ( $srv in $serverSet ) { Assert-BenchJarSource -Server $srv }
+Write-Host "Source jars match their pinned SHA256 values." -ForegroundColor Green
+
+Initialize-BenchShim
+Push-Location $BenchRepoRoot
+try {
+    # ---------------------------------------------------------------- install engines
+    if ( -not $SkipInstall ) {
+        foreach ( $srv in $serverSet ) {
+            Write-Host "`n=== Installing $($srv.Name) engine ($($srv.Config)) ===" -ForegroundColor Cyan
+            box server start serverConfigFile=$($srv.Config)
+            if ( $LASTEXITCODE -ne 0 ) { throw "Failed to start $($srv.Config)" }
+        }
+    }
+
+    # ---------------------------------------------------------------- stop
+    Write-Host "`n=== Stopping test servers so jars can be placed ===" -ForegroundColor Cyan
+    foreach ( $srv in $serverSet ) {
+        Stop-TestServer -Server $srv
+        Write-Host "  $($srv.Name) stopped."
+    }
+
+    # ---------------------------------------------------------------- place jars
+    foreach ( $srv in $serverSet ) {
+        if ( $srv.Family -ne 'adobe' ) { Write-Host "  $($srv.Name): $($srv.Engine), no jar to place"; continue }
+        $updatesDir = Join-Path ( Get-TestServerHome $srv ) 'WEB-INF\cfusion\lib\updates'
+        if ( -not ( Test-Path $updatesDir ) ) {
+            throw "Updates directory missing for $($srv.Name): $updatesDir. Re-run without -SkipInstall."
+        }
+        $target = Get-BenchDeployedJarPath $srv
+        $jar    = Get-TestServerJar $srv
+
+        if ( $jar ) {
+            Copy-Item -Path $jar.Path -Destination $target -Force
+            Write-Host "Placed $( Split-Path -Leaf $jar.Path ) in $($srv.Name) as hf202300-4232227.jar" -ForegroundColor Green
+        }
+        elseif ( Test-Path $target ) {
+            Remove-Item $target -Force
+            Write-Host "Removed a stray hotfix jar from $($srv.Name)" -ForegroundColor Yellow
+        }
+
+        if ( $ClearFelixCache ) {
+            Clear-BenchFelixCache -Server $srv
+            Write-Host "  $($srv.Name): felix-cache cleared"
+        }
+
+        $jars = Get-ChildItem -Path $updatesDir -Filter '*.jar' | Select-Object -ExpandProperty Name
+        Write-Host "  $($srv.Name) updates: $( $jars -join ', ' )"
+    }
+
+    # ---------------------------------------------------------------- start and verify
+    Write-Host "`n=== Starting test servers ===" -ForegroundColor Cyan
+    foreach ( $srv in $serverSet ) {
+        $null = Start-TestServer -Server $srv
+        Write-Host "  $($srv.Name) up on $($srv.Port)."
+    }
+
+    Write-Host "`n=== Engine identity ===" -ForegroundColor Cyan
+    $identities = Get-TestServerIdentities -Servers $serverSet -SaveTo $OutputDir
+
+    foreach ( $srv in $serverSet ) {
+        $id = $identities[ $srv.Name ]
+        Write-Host "`n[$($srv.Name)] port $($srv.Port)  ($($srv.Role))"
+        Write-Host "  Engine     : $( if ( $id.PSObject.Properties.Name -contains 'productName' ) { $id.productName } else { 'ColdFusion' } ) $($id.productVersion) $($id.productLevel)"
+        Write-Host "  JVM        : $($id.jvmVersion) ($($id.jvmVendor))"
+        if ( $srv.Family -ne 'adobe' ) { continue }
+        Write-Host "  Lock design: $($id.constructionLocks.design)"
+        foreach ( $c in @( $BenchTpfClass ) + $BenchPerInstanceClasses + $BenchOtherClasses ) {
+            Write-Host ( "  {0,-42} {1}" -f ( $c -replace '^coldfusion\.(runtime|util)\.', '' ), ( Split-Path -Leaf $id.classSources.$c ) )
+        }
+    }
+
+    Write-Host "`nVERIFIED: every selected test server loads the classes the table says, carries the pinned jar bytes, and reports the expected lock design." -ForegroundColor Green
+    Write-Host "Identity JSON saved under $OutputDir" -ForegroundColor Green
+    Write-Host "`nNEXT (do NOT skip): confirm the buggy test server still reproduces contamination, so it is a valid known-bad check:" -ForegroundColor Yellow
+    Write-Host "  .\scripts\Test-Contamination.ps1 -Server buggy -TotalRequests 20000 -Connections 20"
+    Write-Host "then the fresh-start contamination test on the new hotfix server:" -ForegroundColor Yellow
+    Write-Host "  .\scripts\Test-Contamination.ps1 -Server perclass-u23 -ColdStart -TotalRequests 100000 -Connections 20 -Sessions 3"
+}
+finally {
+    Pop-Location
+}

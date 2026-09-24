@@ -1,0 +1,26 @@
+{
+    "name": "adobe-scope-contamination-bench-lucee6",
+    "web": {
+        "rewrites": {
+            "enable": true
+        },
+        "HTTP": {
+            "port": 60850
+        }
+    },
+    "app": {
+        "serverHomeDirectory": ".engine/bench-lucee6",
+        "cfengine": "lucee@6"
+    },
+    "fusionreactor": {
+        "enable": false
+    },
+    "jvm": {
+        "javaVersion": "openjdk17_jdk",
+        "heapSize": "1024",
+        "minHeapSize": "1024"
+    },
+    "cfconfig": {
+        "file": ".cfconfig-bench-db.json"
+    }
+}

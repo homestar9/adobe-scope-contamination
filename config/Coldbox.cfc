@@ -145,7 +145,18 @@ component {
 		variables.moduleSettings = {
 			// Pin the SQL Server grammar so generated SQL uses [bracket] quoting,
 			// matching the production evidence (UPDATE [user_type] SET ...).
-			qb : { defaultGrammar : "SqlServerGrammar@qb" }
+			qb    : { defaultGrammar : "SqlServerGrammar@qb" },
+			// Settings for the patched Quick module (patches/quick/). Driven by
+			// environment variables so gate runs can toggle them per server
+			// start without editing this file. Stock Quick ignores these keys.
+			//   QUICK_VERIFY_ENTITY_TABLE : off | detect | repair
+			//   QUICK_WARMUP              : comma list of entity mappings to
+			//                               construct serially at startup
+			quick : {
+				verifyEntityTableOnWrite : getSystemSetting( "QUICK_VERIFY_ENTITY_TABLE", "off" ),
+				verifyEntityTableOnRead  : getSystemSetting( "QUICK_VERIFY_ENTITY_TABLE", "off" ),
+				metadataWarmupMappings   : listToArray( getSystemSetting( "QUICK_WARMUP", "" ) )
+			}
 		};
 
 		/**

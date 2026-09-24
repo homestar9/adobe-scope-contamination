@@ -29,8 +29,27 @@ component {
 		// Scope-contamination reproduction endpoints
 		route( "/repro/alpha" ).to( "Repro.alpha" );
 		route( "/repro/bravo" ).to( "Repro.bravo" );
+		route( "/repro/wire" ).to( "Repro.wire" );
 		route( "/repro/status" ).to( "Repro.status" );
 		route( "/repro/stress" ).to( "Repro.stress" );
+
+		// Database-free endpoints for measuring CFC construction overhead
+		route( "/benchmark/control" ).to( "Benchmark.control" );
+		route( "/benchmark/construct" ).to( "Benchmark.construct" );
+		route( "/benchmark/engine" ).to( "Benchmark.engine" );
+		route( "/benchmark/quickconstruct" ).to( "Benchmark.quickConstruct" );
+
+		// Adversarial construction-lock probes (plan section 2d, scripts/Invoke-LockStressTests.ps1)
+		route( "/torture/p1" ).to( "Torture.p1" );
+		route( "/torture/p2" ).to( "Torture.p2" );
+		route( "/torture/p2both" ).to( "Torture.p2both" );
+		route( "/torture/p3" ).to( "Torture.p3" );
+		route( "/torture/p4" ).to( "Torture.p4" );
+		route( "/torture/p5" ).to( "Torture.p5" );
+		route( "/torture/p6" ).to( "Torture.p6" );
+		route( "/torture/p7" ).to( "Torture.p7" );
+		route( "/torture/locks" ).to( "Torture.locks" );
+		route( "/torture/reset" ).to( "Torture.reset" );
 
 		// Conventions-Based Routing
 		route( ":handler/:action?" ).end();

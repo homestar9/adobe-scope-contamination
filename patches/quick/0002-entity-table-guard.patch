@@ -1,0 +1,392 @@
+--- a/ModuleConfig.cfc
++++ b/ModuleConfig.cfc
+@@ -18,6 +18,16 @@
+ 					message = "Attempted to lazy load the [#arguments.relationName#] relationship on the entity [#arguments.entity.mappingName()#] but lazy loading is disabled. This is usually caused by the N+1 problem and is a sign that you are missing an eager load."
+ 				);
+ 			},
++			// Guards against a known Adobe ColdFusion engine concurrency defect that can
++			// cross builder state between entities constructed at the same time, which can
++			// produce SQL against the wrong table.
++			// "off": do nothing (default).
++			// "detect": announce a `quickEntityTableMismatch` interception point when a
++			//           builder's table does not match its entity at execution time.
++			// "repair": announce and also reset the builder's table from the entity before
++			//           executing.
++			"verifyEntityTableOnWrite" : "off",
++			"verifyEntityTableOnRead"  : "off",
+ 			"metadataCache" : {
+ 				"name"       : "quickMeta",
+ 				"provider"   : "coldbox.system.cache.providers.CacheBoxColdBoxProvider",
+@@ -42,7 +52,8 @@
+ 				"quickPreUpdate",
+ 				"quickPostUpdate",
+ 				"quickPreDelete",
+-				"quickPostDelete"
++				"quickPostDelete",
++				"quickEntityTableMismatch"
+ 			]
+ 		};
+ 
+@@ -60,7 +71,9 @@
+ 			.initArg( name = "defaultOptions", value = settings.defaultQueryOptions )
+ 			.initArg( name = "utils", dsl = "QueryUtils@qb" )
+ 			.initArg( name = "sqlCommenter", ref = "ColdBoxSQLCommenter@qb" )
+-			.initArg( name = "returnFormat", value = "array" );
++			.initArg( name = "returnFormat", value = "array" )
++			.initArg( name = "verifyEntityTableOnWrite", value = settings.verifyEntityTableOnWrite )
++			.initArg( name = "verifyEntityTableOnRead", value = settings.verifyEntityTableOnRead );
+ 
+ 		if ( isSimpleValue( settings.metadataCache ) ) {
+ 			settings.metadataCache = { "name" : settings.metadataCache };
+@@ -95,4 +108,5 @@
+ 		}
+ 	}
+ 
++
+ }
+--- a/models/QuickBuilder.cfc
++++ b/models/QuickBuilder.cfc
+@@ -63,6 +63,20 @@
+ 	property name="_lazyLoadingViolationCallback" inject="box:setting:lazyLoadingViolationCallback@quick";
+ 
+ 	/**
++	 * Verification mode for the paired qb builder's table name on write
++	 * statements: "off", "detect", or "repair".  Copied lazily from the
++	 * paired qb builder (which receives it at construction), so no
++	 * per-instance injection work is needed.  See `assertEntityTableOnQb`.
++	 */
++	property name="_verifyEntityTableOnWrite";
++
++	/**
++	 * Verification mode for the paired qb builder's table name on select
++	 * statements: "off", "detect", or "repair".  See `assertEntityTableOnQb`.
++	 */
++	property name="_verifyEntityTableOnRead";
++
++	/**
+ 	 * A map of aliases to entities to use when qualifying aliased columns.
+ 	 */
+ 	property name="aliasMap";
+@@ -435,6 +449,30 @@
+ 			getEntity().guardReadOnly();
+ 			getEntity().guardAgainstReadOnlyAttributes( arguments.attributes );
+ 		}
++		assertEntityTableOnQb( "update" );
++		// Diagnostic for the crossed-graph case: when a whole relationship graph
++		// is crossed by the engine defect, the builder and its entity agree with
++		// each other and only the attribute names betray the mix.  Announce any
++		// attribute the target entity does not know about.
++		param variables._verifyEntityTableOnWrite = "off";
++		if ( variables._verifyEntityTableOnWrite != "off" ) {
++			arguments.attributes.each( function( key ) {
++				if ( !getEntity().hasAttribute( arguments.key ) ) {
++					try {
++						getEntity().fireEvent(
++							"EntityTableMismatch",
++							{
++								"operation"     : "updateAll-unknown-attribute",
++								"expectedTable" : getEntity().tableName(),
++								"actualTable"   : arguments.key,
++								"repaired"      : false
++							}
++						);
++					} catch ( any e ) {
++					}
++				}
++			} );
++		}
+ 		return variables.qb.update(
+ 			arguments.attributes.map( function( key, value ) {
+ 				return getEntity().generateQueryParamStruct(
+@@ -514,6 +552,7 @@
+ 				} );
+ 			} );
+ 		}
++		assertEntityTableOnQb( "delete" );
+ 		return variables.qb.delete();
+ 	}
+ 
+@@ -944,6 +983,78 @@
+ 	 *
+ 	 * @return                  any
+ 	 */
++	/**
++	 * Re-asserts the entity's table on the paired qb builder just before a
++	 * statement executes.
++	 *
++	 * On Adobe ColdFusion, a known engine concurrency defect can cross a
++	 * whole `variables` scope between objects constructed at the same time.
++	 * When that happens to a builder, every read from the crossed scope is
++	 * wrong together — the table name AND the entity reference — so a check
++	 * inside the qb builder can see a consistent-looking pair and still
++	 * compile SQL against the wrong table.  This method runs in the
++	 * QuickBuilder and pushes the table read from ITS entity reference into
++	 * the qb object.  The statement then executes against the same table
++	 * that supplied its columns, which is the invariant that prevents
++	 * cross-entity writes.  This mirrors the workaround that has run in
++	 * production: `variables.qb.from( getEntity().tableName() )` just before
++	 * executing.
++	 *
++	 * In "detect" and "repair" modes a visible mismatch announces the
++	 * `quickEntityTableMismatch` interception point.  Only "repair" changes
++	 * the builder — and it pushes even when no mismatch is visible, because
++	 * a fully-crossed scope shows no mismatch.  With both modes "off" (the
++	 * default) this returns after two string comparisons.
++	 *
++	 * @operation  The qb method about to execute.
++	 */
++	private void function assertEntityTableOnQb( required string operation ) {
++		if ( isNull( variables._verifyEntityTableOnWrite ) ) {
++			variables._verifyEntityTableOnWrite = variables.qb.writeVerifyMode();
++		}
++		if ( isNull( variables._verifyEntityTableOnRead ) ) {
++			variables._verifyEntityTableOnRead = variables.qb.readVerifyMode();
++		}
++		if ( variables._verifyEntityTableOnWrite == "off" && variables._verifyEntityTableOnRead == "off" ) {
++			return;
++		}
++		var isWrite = listFindNoCase( "update,insert,upsert,insertUsing,updateOrInsert,delete", arguments.operation ) > 0;
++		var isRead  = arguments.operation == "get";
++		if ( !isWrite && !isRead ) {
++			return;
++		}
++		var mode = isWrite ? variables._verifyEntityTableOnWrite : variables._verifyEntityTableOnRead;
++		if ( mode == "off" ) {
++			return;
++		}
++		var entityTable = getEntity().tableName();
++		if ( !isSimpleValue( entityTable ) || !len( entityTable ) ) {
++			return;
++		}
++		var qbTable = variables.qb.getTableName();
++		if ( !isSimpleValue( qbTable ) || !len( qbTable ) ) {
++			return; // fromRaw / fromSub / expression tables are left alone
++		}
++		if ( compareNoCase( qbTable, entityTable ) != 0 ) {
++			try {
++				getEntity().fireEvent(
++					"EntityTableMismatch",
++					{
++						"operation"     : arguments.operation,
++						"expectedTable" : entityTable,
++						"actualTable"   : qbTable,
++						"repaired"      : mode == "repair"
++					}
++				);
++			} catch ( any e ) {
++				// The announcement must never change the outcome of the statement.
++			}
++		}
++		if ( mode == "repair" ) {
++			variables.qb.from( entityTable );
++		}
++	}
++
+ 	public any function onMissingMethod( required string missingMethodName, struct missingMethodArguments = {} ) {
+ 		var result = getEntity().tryScopes(
+ 			arguments.missingMethodName,
+@@ -967,6 +1078,8 @@
+ 			return result;
+ 		}
+ 
++		assertEntityTableOnQb( arguments.missingMethodName );
++
+ 		result = invoke(
+ 			variables.qb,
+ 			arguments.missingMethodName,
+--- a/models/QuickQB.cfc
++++ b/models/QuickQB.cfc
+@@ -11,6 +11,31 @@
+ 	property name="quickBuilder";
+ 
+ 	/**
++	 * Verification mode for the builder's table name on write statements
++	 * (insert, update, upsert, delete): "off", "detect", or "repair".
++	 * Arrives as a constructor argument from the module's WireBox mapping
++	 * (see ModuleConfig.onLoad), so construction pays no injection cost.
++	 * See `assertEntityTable`.
++	 */
++	property name="_verifyEntityTableOnWrite";
++
++	/**
++	 * Verification mode for the builder's table name on select statements:
++	 * "off", "detect", or "repair".  See `assertEntityTable`.
++	 */
++	property name="_verifyEntityTableOnRead";
++
++	/**
++	 * Stores the verification modes passed by the module's WireBox mapping,
++	 * then passes every other argument through to qb's init unchanged.
++	 */
++	public any function init() {
++		variables._verifyEntityTableOnWrite = structKeyExists( arguments, "verifyEntityTableOnWrite" ) ? arguments.verifyEntityTableOnWrite : "off";
++		variables._verifyEntityTableOnRead  = structKeyExists( arguments, "verifyEntityTableOnRead" ) ? arguments.verifyEntityTableOnRead : "off";
++		return super.init( argumentCollection = arguments );
++	}
++
++	/**
+ 	 * Adds a basic WHERE clause to the query.
+ 	 * If the column is an attribute on the entity, a query param struct is
+ 	 * generated using the column's sql type, if set.
+@@ -282,6 +307,8 @@
+ 		struct options = {},
+ 		boolean toSql  = false
+ 	) {
++		assertEntityTable( writeVerifyMode(), "insertUsing" );
++
+ 		if ( isStruct( arguments.source ) && structKeyExists( arguments.source, "isQuickBuilder" ) ) {
+ 			arguments.source = arguments.source.getQB();
+ 		}
+@@ -305,6 +332,8 @@
+ 		struct options = {},
+ 		boolean toSql  = false
+ 	) {
++		assertEntityTable( writeVerifyMode(), "update" );
++
+ 		for ( var key in arguments.values ) {
+ 			if ( isStruct( arguments.values[ key ] ) && structKeyExists( arguments.values[ key ], "isQuickBuilder" ) ) {
+ 				arguments.values[ key ] = arguments.values[ key ].getQb();
+@@ -323,6 +352,8 @@
+ 		struct options          = {},
+ 		boolean toSql           = false
+ 	) {
++		assertEntityTable( writeVerifyMode(), "upsert" );
++
+ 		if (
+ 			!isNull( arguments.source ) && isStruct( arguments.source ) && structKeyExists(
+ 				arguments.source,
+@@ -336,6 +367,125 @@
+ 	}
+ 
+ 	/**
++	 * Inserts data into the entity's table.
++	 * Overridden to verify the builder's table against its entity before
++	 * executing (see `assertEntityTable`).
++	 *
++	 * @values A struct or array of structs to insert in to the table.
++	 * @options Any options to pass to `queryExecute`. Default: {}.
++	 * @toSql If true, returns the raw sql string instead of running the query.  Useful for debugging. Default: false.
++	 *
++	 * @return query
++	 */
++	public any function insert( required any values, struct options = {}, boolean toSql = false ) {
++		assertEntityTable( writeVerifyMode(), "insert" );
++		return super.insert( argumentCollection = arguments );
++	}
++
++	/**
++	 * Deletes a record set.
++	 * Overridden to verify the builder's table against its entity before
++	 * executing (see `assertEntityTable`).
++	 *
++	 * @id A convenience argument for `where( "id", "=", arguments.id ).  The query can be constrained by normal WHERE methods if you have more complex needs.
++	 * @idColumnName The name of the id column for the delete shorthand. Default: "id".
++	 * @options Any options to pass to `queryExecute`. Default: {}.
++	 * @toSql If true, returns the raw sql string instead of running the query.  Useful for debugging. Default: false.
++	 *
++	 * @return query
++	 */
++	public any function delete(
++		any id,
++		string idColumnName = "id",
++		struct options      = {},
++		boolean toSql       = false
++	) {
++		assertEntityTable( writeVerifyMode(), "delete" );
++		return super.delete( argumentCollection = arguments );
++	}
++
++	/**
++	 * Runs the current select query.
++	 * Overridden to verify the builder's table against its entity before
++	 * executing (see `assertEntityTable`).
++	 *
++	 * @columns  An optional column, list of columns, or array of columns to select.
++	 * @options  Any options to pass to `queryExecute`. Default: {}.
++	 *
++	 * @return   any
++	 */
++	public any function get( any columns, struct options = {} ) {
++		assertEntityTable( readVerifyMode(), "get" );
++		return super.get( argumentCollection = arguments );
++	}
++
++	/**
++	 * Guards a statement about to execute against a known Adobe ColdFusion
++	 * engine concurrency defect.  Under concurrent construction, the engine
++	 * can cross `variables` scope values between builders, leaving this
++	 * builder's table name pointing at a different entity's table.  The
++	 * entity itself was observed to keep the correct table, so comparing the
++	 * two right before execution catches the corruption before any SQL runs.
++	 *
++	 * In "detect" mode, a `quickEntityTableMismatch` interception point is
++	 * announced when the builder's table does not match its entity's table.
++	 * In "repair" mode, the builder's table is also reset from the entity.
++	 * In "off" mode (the default), nothing happens.
++	 *
++	 * @mode       "off", "detect", or "repair".
++	 * @operation  The statement type being executed, for the announcement.
++	 */
++	private void function assertEntityTable( required string mode, required string operation ) {
++		if ( arguments.mode == "off" || isNull( variables.entity ) ) {
++			return;
++		}
++		if ( !isSimpleValue( variables.tableName ) || !len( variables.tableName ) ) {
++			return;
++		}
++		var entityTable = variables.entity.tableName();
++		if ( !isSimpleValue( entityTable ) || !len( entityTable ) || compareNoCase( variables.tableName, entityTable ) == 0 ) {
++			return;
++		}
++		var mismatchedTable = variables.tableName;
++		var repaired        = arguments.mode == "repair";
++		if ( repaired ) {
++			this.from( entityTable );
++		}
++		try {
++			variables.entity.fireEvent(
++				"EntityTableMismatch",
++				{
++					"operation"     : arguments.operation,
++					"expectedTable" : entityTable,
++					"actualTable"   : mismatchedTable,
++					"repaired"      : repaired,
++					"builder"       : this
++				}
++			);
++		} catch ( any e ) {
++			// The announcement must never change the outcome of the statement.
++		}
++	}
++
++	/**
++	 * Returns the verification mode for write statements, defaulting to "off"
++	 * for builders created outside of WireBox.
++	 */
++	public string function writeVerifyMode() {
++		param variables._verifyEntityTableOnWrite = "off";
++		return variables._verifyEntityTableOnWrite;
++	}
++
++	/**
++	 * Returns the verification mode for select statements, defaulting to "off"
++	 * for builders created outside of WireBox.
++	 */
++	public string function readVerifyMode() {
++		param variables._verifyEntityTableOnRead = "off";
++		return variables._verifyEntityTableOnRead;
++	}
++
++	/**
+ 	 * Adds a sub-select to the query.
+ 	 *
+ 	 * @alias The alias for the sub-select
+@@ -1034,6 +1184,8 @@
+ 		if ( variables._usingQuickColumnFormatter ) {
+ 			newBuilder.useQuickColumnFormatter();
+ 		}
++		newBuilder.set_verifyEntityTableOnWrite( writeVerifyMode() );
++		newBuilder.set_verifyEntityTableOnRead( readVerifyMode() );
+ 		return newBuilder;
+ 	}
+ 

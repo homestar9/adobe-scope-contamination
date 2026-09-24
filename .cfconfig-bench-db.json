@@ -1,0 +1,26 @@
+{
+    "inspectTemplate":"never",
+    "saveClassFiles":true,
+    "componentCacheEnabled":true,
+    "templateCacheSize":4096,
+    "maxTemplateRequests":100,
+    "requestQueueTimeout":300,
+    "debuggingEnabled":false,
+    "debuggingReportExecutionTimes":false,
+    "requestTimeoutEnabled":true,
+    "requestTimeout":"0,0,5,0",
+    "robustExceptionEnabled":true,
+    "datasources":{
+        "${DB_DATABASE}":{
+            "host":"${DB_HOST}",
+            "dbdriver":"${DB_DRIVER}",
+            "database":"${DB_DATABASE}",
+            "port":"${DB_PORT}",
+            "username":"${DB_USER}",
+            "password":"${DB_PASSWORD}",
+            "sendStringParametersAsUnicode":false,
+            "maintainConnections":true,
+            "maxPooledStatements":"100"
+        }
+    }
+}

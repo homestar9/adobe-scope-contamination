@@ -1,0 +1,49 @@
+--- a/ModuleConfig.cfc
++++ b/ModuleConfig.cfc
+@@ -28,6 +28,14 @@
+ 			//           executing.
+ 			"verifyEntityTableOnWrite" : "off",
+ 			"verifyEntityTableOnRead"  : "off",
++			// An optional array of WireBox mapping names (entity names) to construct
++			// once, one at a time, right after the application loads.  This fills the
++			// metadata cache before any concurrent traffic arrives.  On Adobe
++			// ColdFusion this avoids the known engine concurrency defect that can
++			// corrupt shared component metadata when many entities are constructed
++			// for the first time at the same moment (for example, a traffic burst
++			// right after a server restart).
++			"metadataWarmupMappings" : [],
+ 			"metadataCache" : {
+ 				"name"       : "quickMeta",
+ 				"provider"   : "coldbox.system.cache.providers.CacheBoxColdBoxProvider",
+@@ -108,5 +116,31 @@
+ 		}
+ 	}
+ 
++	/**
++	 * Constructs each entity listed in the `metadataWarmupMappings` setting
++	 * once, one at a time, after all modules and application models have
++	 * loaded.  Each construction is shallow: it fills the metadata cache for
++	 * that entity (and its parent entities) without firing `instanceReady`
++	 * events or setting up mementifier.
++	 *
++	 * A failed warm-up never blocks application startup; the entity will
++	 * simply build its metadata on first use, exactly as it does today.
++	 */
++	function afterAspectsLoad() {
++		settings.metadataWarmupMappings.each( function( mapping ) {
++			try {
++				wirebox.getInstance( name = arguments.mapping, initArguments = { "meta" : {}, "shallow" : true } );
++			} catch ( any e ) {
++				try {
++					controller
++						.getLogBox()
++						.getLogger( "quick.ModuleConfig" )
++						.warn( "Quick metadata warm-up failed for [#arguments.mapping#]: #e.message#" );
++				} catch ( any loggingError ) {
++					// Warming up is best-effort; never let it interfere with startup.
++				}
++			}
++		} );
++	}
+ 
+ }
