@@ -1,40 +1,52 @@
 <#
 .SYNOPSIS
-    The scope-contamination round: does Adobe's v3 hotfix stop the contamination, what does it
-    cost, and how do Lucee 6 and BoxLang compare under heavy load.
+    The scope-contamination round: does the new Adobe hotfix stop the contamination, what does
+    it cost, and how do the earlier hotfixes (and optionally Lucee 6 and BoxLang) compare.
 
 .DESCRIPTION
-    The null-pointer failure on a freshly started server is deliberately kept out of this round.
-    Every contamination session restarts its test server and sends 500 serial requests first, so
-    no burst ever meets a cold JVM.
+    The startup crash on a freshly started server is a separate issue and is kept out of this
+    round. Every contamination session restarts its test server, waits until it answers, sends
+    500 serial requests, and only then bursts.
 
     Phases (in order; -Phases picks a subset):
-      contamination  large warmed contamination tests per test server, at 20 and 64 connections
-                     per endpoint, plus the Quick-against-unrelated-construction check on v3
-      realworkload   /repro throughput at 1, 8, 32 and 64 connections per endpoint, all six servers
+      contamination  large warmed contamination tests on the new hotfix server at 20 and 64
+                     connections per endpoint (1,000,000 requests at 20, 300,000 at 64), the
+                     Quick-against-unrelated-construction check, the shared-temporary endpoint,
+                     and same-day reference sessions on buggy, stock, v1 and v3
+      realworkload   /repro throughput at 1, 8, 32 and 64 connections per endpoint
       construction   database-free construction shapes and Quick entity + builder at 1, 32 and 64
 
-    Results: benchmark-results-u23\adobe-v3\scope-round\. Roughly 6 hours with every phase.
+    Results: benchmark-results-u23\<round>\scope-round\. Roughly 6 hours with every phase.
+
+.PARAMETER NewHotfixServer
+    The test server under test (default localtemp-u23, Adobe v4).
+
+.PARAMETER IncludeOtherEngines
+    Also run Lucee 6 and BoxLang (their September 2026 numbers are otherwise reused).
 
 .EXAMPLE
     .\scripts\Invoke-ScopeContaminationRound.ps1
 .EXAMPLE
-    .\scripts\Invoke-ScopeContaminationRound.ps1 -Phases realworkload,construction
+    .\scripts\Invoke-ScopeContaminationRound.ps1 -Phases realworkload,construction -IncludeOtherEngines
 #>
 [CmdletBinding()]
 param(
     [ValidateSet( 'contamination', 'realworkload', 'construction' )]
     [string[]] $Phases = @( 'contamination', 'realworkload', 'construction' ),
+    [string]   $NewHotfixServer = 'localtemp-u23',
+    [switch]   $IncludeOtherEngines,
     [string]   $OutputRoot = ''
 )
 
 $ErrorActionPreference = 'Continue'
 . ( Join-Path $PSScriptRoot 'TestServers.ps1' )
-if ( -not $OutputRoot ) { $OutputRoot = Join-Path $BenchRepoRoot 'benchmark-results-u23\adobe-v3\scope-round' }
+if ( -not $OutputRoot ) { $OutputRoot = Join-Path $BenchRepoRoot "benchmark-results-u23\$BenchRound\scope-round" }
 if ( -not ( Test-Path $OutputRoot ) ) { New-Item -ItemType Directory -Path $OutputRoot | Out-Null }
 $LogPath = Join-Path $OutputRoot "round-$( Get-Date -Format 'yyyyMMdd-HHmmss' ).log"
 $scripts = $PSScriptRoot
-$all = @( 'u23', 'lock-u23', 'buggy', 'perclass-u23', 'lucee6', 'boxlang' )
+$all = @( @( 'u23', 'lock-u23', 'buggy', 'perclass-u23', $NewHotfixServer ) | Select-Object -Unique )
+if ( $IncludeOtherEngines ) { $all += @( 'lucee6', 'boxlang' ) }
+$new = $NewHotfixServer
 
 function Step {
     param( [string] $Name, [scriptblock] $Body )
@@ -54,7 +66,7 @@ function Contam {
         Select-String -Pattern 'session \d+:|x  |CLEAN|CONTAMINATION|INCOMPLETE' | ForEach-Object { $_.Line }
 }
 
-"Scope-contamination round: phases=$( $Phases -join ',' )" | Tee-Object -FilePath $LogPath -Append
+"Scope-contamination round: phases=$( $Phases -join ',' ) newHotfixServer=$new servers=$( $all -join ',' )" | Tee-Object -FilePath $LogPath -Append
 
 # Only one test server under load at a time; all six stay up so every phase can use them.
 foreach ( $name in $all ) {
@@ -67,22 +79,23 @@ foreach ( $srv in $TestServers ) {
 
 if ( $Phases -contains 'contamination' ) {
     # Reference rates first: how often the unfixed engines contaminate on this workload today.
-    Step 'contamination: buggy (Update 21, no fix) 20 conns'   { Contam -Server buggy        -Endpoints alpha,bravo -Connections 20 -PerSession 20000  -Sessions 2 -Label ab-c20 }
-    Step 'contamination: u23 (stock Update 23) 20 conns'       { Contam -Server u23          -Endpoints alpha,bravo -Connections 20 -PerSession 20000  -Sessions 2 -Label ab-c20 }
-    # The question: v3 at large N, standard and heavy concurrency.
-    Step 'contamination: perclass-u23 (v3) 20 conns'           { Contam -Server perclass-u23 -Endpoints alpha,bravo -Connections 20 -PerSession 100000 -Sessions 6 -Label ab-c20 }
-    Step 'contamination: perclass-u23 (v3) 64 conns'           { Contam -Server perclass-u23 -Endpoints alpha,bravo -Connections 64 -PerSession 100000 -Sessions 3 -Label ab-c64 }
-    # The accepted fix, same workload, for comparison.
-    Step 'contamination: lock-u23 (v1) 20 conns'               { Contam -Server lock-u23     -Endpoints alpha,bravo -Connections 20 -PerSession 100000 -Sessions 3 -Label ab-c20 }
-    Step 'contamination: lock-u23 (v1) 64 conns'               { Contam -Server lock-u23     -Endpoints alpha,bravo -Connections 64 -PerSession 100000 -Sessions 1 -Label ab-c64 }
-    Step 'contamination: buggy 64 conns'                       { Contam -Server buggy        -Endpoints alpha,bravo -Connections 64 -PerSession 20000  -Sessions 1 -Label ab-c64 }
-    # v3 with Quick running against unrelated construction that takes none of Quick's locks.
-    Step 'contamination: perclass-u23 (v3) alpha+wire 20 conns' { Contam -Server perclass-u23 -Endpoints alpha,wire -Connections 20 -PerSession 40000 -Sessions 1 -Label aw-c20 }
-    # The two other CFML engines: same workload, standard and heavy.
-    Step 'contamination: lucee6 20 conns'                      { Contam -Server lucee6       -Endpoints alpha,bravo -Connections 20 -PerSession 40000  -Sessions 1 -Label ab-c20 }
-    Step 'contamination: lucee6 64 conns'                      { Contam -Server lucee6       -Endpoints alpha,bravo -Connections 64 -PerSession 30000  -Sessions 1 -Label ab-c64 }
-    Step 'contamination: boxlang 20 conns'                     { Contam -Server boxlang      -Endpoints alpha,bravo -Connections 20 -PerSession 50000  -Sessions 2 -Label ab-c20 }
-    Step 'contamination: boxlang 64 conns'                     { Contam -Server boxlang      -Endpoints alpha,bravo -Connections 64 -PerSession 60000  -Sessions 1 -Label ab-c64 }
+    Step 'contamination: buggy (Update 21, no fix) 20 conns'   { Contam -Server buggy        -Endpoints alpha,bravo     -Connections 20 -PerSession 20000  -Sessions 2 -Label ab-c20 }
+    Step 'contamination: buggy tempvar 20 conns'               { Contam -Server buggy        -Endpoints tempvar,tempvar -Connections 20 -PerSession 20000  -Sessions 1 -Label tv-c20 }
+    Step 'contamination: u23 (stock Update 23) 20 conns'       { Contam -Server u23          -Endpoints alpha,bravo     -Connections 20 -PerSession 20000  -Sessions 2 -Label ab-c20 }
+    # The question: the new hotfix at large N, standard and heavy concurrency.
+    Step "contamination: $new 20 conns (1,000,000)"            { Contam -Server $new         -Endpoints alpha,bravo     -Connections 20 -PerSession 100000 -Sessions 10 -Label ab-c20 }
+    Step "contamination: $new 64 conns (300,000)"              { Contam -Server $new         -Endpoints alpha,bravo     -Connections 64 -PerSession 100000 -Sessions 3 -Label ab-c64 }
+    Step "contamination: $new alpha+wire 20 conns"             { Contam -Server $new         -Endpoints alpha,wire      -Connections 20 -PerSession 40000  -Sessions 1 -Label aw-c20 }
+    Step "contamination: $new tempvar 20 conns"                { Contam -Server $new         -Endpoints tempvar,tempvar -Connections 20 -PerSession 100000 -Sessions 1 -Label tv-c20 }
+    Step "contamination: $new tempvar 64 conns"                { Contam -Server $new         -Endpoints tempvar,tempvar -Connections 64 -PerSession 100000 -Sessions 1 -Label tv-c64 }
+    # The earlier hotfixes, same workload, same day, for comparison (their large runs are in the September results).
+    Step 'contamination: perclass-u23 (v3) 20 conns'           { Contam -Server perclass-u23 -Endpoints alpha,bravo     -Connections 20 -PerSession 100000 -Sessions 2 -Label ab-c20 }
+    Step 'contamination: lock-u23 (v1) 20 conns'               { Contam -Server lock-u23     -Endpoints alpha,bravo     -Connections 20 -PerSession 100000 -Sessions 1 -Label ab-c20 }
+    Step 'contamination: buggy 64 conns'                       { Contam -Server buggy        -Endpoints alpha,bravo     -Connections 64 -PerSession 20000  -Sessions 1 -Label ab-c64 }
+    if ( $IncludeOtherEngines ) {
+        Step 'contamination: lucee6 20 conns'                  { Contam -Server lucee6       -Endpoints alpha,bravo     -Connections 20 -PerSession 40000  -Sessions 1 -Label ab-c20 }
+        Step 'contamination: boxlang 20 conns'                 { Contam -Server boxlang      -Endpoints alpha,bravo     -Connections 20 -PerSession 50000  -Sessions 1 -Label ab-c20 }
+    }
 }
 
 if ( $Phases -contains 'realworkload' ) {

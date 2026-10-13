@@ -20,12 +20,14 @@
     `buggy` test server first as a known-bad check: it must report contaminations > 0, or a clean
     result on any other test server proves nothing.
 
-    Cold sessions: the cold class-init window is the highest-risk case and it is bimodal.
-    -ColdStart kills the test server's JVM and starts it fresh before EVERY session, including the
-    first, and the first requests of the session are the concurrent burst.
+    Every burst hits a server that is online and warmed. -ColdStart kills the test server's JVM
+    and starts it fresh before EVERY session, waits until /benchmark/engine answers, and then
+    sends -WarmRequests serial requests (default 500 with -ColdStart) before the burst. A burst
+    against a freshly started, un-warmed server is refused: the startup crash is a separate
+    issue, filed with Adobe on its own, and is kept out of these results.
 
 .PARAMETER Test server
-    Test server name from scripts\TestServers.ps1 (u23, lock-u23, buggy, perclass-u23).
+    Test server name from scripts\TestServers.ps1 (u23, lock-u23, buggy, perclass-u23, localtemp-u23).
 
 .PARAMETER Profile
     short (default): 2 sessions x 20,000 requests, about 5 minutes on a locked test server.
@@ -34,8 +36,9 @@
 .PARAMETER Endpoints
     The two /repro endpoints driven at the same time (default alpha,bravo: the Quick workload).
     wire = six unrelated WireBox-built transients per request with no Quick and no shared base
-    class. Examples: -Endpoints alpha,wire (Quick against unrelated construction) or
-    -Endpoints wire,wire (unrelated construction only).
+    class. tempvar = three inline literals built by a shared singleton per request, no database:
+    the exact mechanism Adobe's v4 changes. Examples: -Endpoints alpha,wire (Quick against
+    unrelated construction), -Endpoints wire,wire, -Endpoints tempvar,tempvar.
 
 .PARAMETER TotalRequests
     Combined request target per session, split evenly across the two endpoints.
@@ -47,36 +50,36 @@
     Number of sessions to run. Requests accumulate across sessions.
 
 .PARAMETER ColdStart
-    Fresh JVM before every session (kill + start).
+    Fresh JVM before every session (kill + start, wait until it answers, then warm it).
 
 .PARAMETER WarmRequests
-    Serial single-connection requests (alternating alpha/bravo) sent and discarded before
-    each session's burst. 0 for a cold burst; 2000 for the documented "warm" contamination test.
+    Serial single-connection requests (alternating the two endpoints) sent and discarded before
+    each session's burst. Defaults to 500 with -ColdStart; 0 is refused with -ColdStart.
 
 .EXAMPLE
     # known-bad check - expect contaminations > 0
     .\scripts\Test-Contamination.ps1 -Server buggy -TotalRequests 20000 -Connections 20
 
 .EXAMPLE
-    # the fresh-start contamination test - expect 0 over 300k across 3 fresh JVMs
-    .\scripts\Test-Contamination.ps1 -Server perclass-u23 -ColdStart -TotalRequests 100000 -Connections 20 -Sessions 3
+    # the report-grade contamination test: 3 fresh JVMs, each warmed with 500 serial requests, then 100k concurrent
+    .\scripts\Test-Contamination.ps1 -Server localtemp-u23 -ColdStart -TotalRequests 100000 -Connections 20 -Sessions 3
 
 .EXAMPLE
-    # the warmed-up contamination test - 2000 serial requests discarded first, then 20k concurrent
-    .\scripts\Test-Contamination.ps1 -Server perclass-u23 -WarmRequests 2000 -TotalRequests 20000 -Label warm
+    # the mechanism alone, no database
+    .\scripts\Test-Contamination.ps1 -Server localtemp-u23 -Endpoints tempvar,tempvar -TotalRequests 20000 -Label tempvar
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $Server,
     [ValidateSet( 'short', 'long' )]
     [string] $Profile        = 'short',
-    [ValidateSet( 'alpha', 'bravo', 'wire' )]
+    [ValidateSet( 'alpha', 'bravo', 'wire', 'tempvar' )]
     [string[]] $Endpoints    = @( 'alpha', 'bravo' ),
     [int]    $TotalRequests  = 20000,
     [int]    $Connections    = 20,
     [int]    $Sessions       = 1,
     [switch] $ColdStart,
-    [int]    $WarmRequests   = 0,
+    [int]    $WarmRequests   = -1,
     [string] $Label          = '',
     [string] $BombardierPath = '',
     [string] $OutputDir      = ''
@@ -87,7 +90,11 @@ $ErrorActionPreference = 'Stop'
 Use-BenchProfile -Profile $Profile -Section 'Contamination' -Bound $PSBoundParameters
 
 $serverObj = Get-TestServer -Name $Server
-if ( -not $Label ) { $Label = if ( $ColdStart ) { 'cold' } elseif ( $WarmRequests -gt 0 ) { 'warm' } else { 'contamination test' } }
+# Every burst hits a warmed server. A fresh JVM gets 500 serial requests first unless told otherwise;
+# a fresh JVM with no warm-up is the separate startup-crash issue and is refused here.
+if ( $WarmRequests -lt 0 ) { $WarmRequests = if ( $ColdStart ) { 500 } else { 0 } }
+if ( $ColdStart -and $WarmRequests -le 0 ) { throw "A concurrent burst against a freshly started, un-warmed server is not part of the hotfix tests (the startup crash is a separate issue). Pass -WarmRequests 500 or drop -ColdStart." }
+if ( -not $Label ) { $Label = if ( $ColdStart ) { 'fresh-warmed' } elseif ( $WarmRequests -gt 0 ) { 'warm' } else { 'contamination test' } }
 if ( -not $OutputDir ) { $OutputDir = Get-BenchResultsRoot -Profile $Profile -Kind "contamination test-$Server-$Label" }
 if ( -not ( Test-Path $OutputDir ) ) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
 $BombardierPath = Get-BenchBombardierPath -Override $BombardierPath

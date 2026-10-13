@@ -30,6 +30,7 @@ component {
 		route( "/repro/alpha" ).to( "Repro.alpha" );
 		route( "/repro/bravo" ).to( "Repro.bravo" );
 		route( "/repro/wire" ).to( "Repro.wire" );
+		route( "/repro/tempvar" ).to( "Repro.tempvar" );
 		route( "/repro/status" ).to( "Repro.status" );
 		route( "/repro/stress" ).to( "Repro.stress" );
 
@@ -48,6 +49,7 @@ component {
 		route( "/torture/p5" ).to( "Torture.p5" );
 		route( "/torture/p6" ).to( "Torture.p6" );
 		route( "/torture/p7" ).to( "Torture.p7" );
+		route( "/torture/p8" ).to( "Torture.p8" );
 		route( "/torture/locks" ).to( "Torture.locks" );
 		route( "/torture/reset" ).to( "Torture.reset" );
 

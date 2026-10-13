@@ -34,3 +34,29 @@ Confirm it with `jcmd <ColdFusion pid> Thread.print -l`. The dump ends with
 
 The `sleep( 100 )` in each pseudo-constructor only makes the timing repeatable. In real code the
 window is the pseudo-constructor's own work.
+
+## scopeleak/
+
+The mechanism behind the contamination itself, and what the fourth hotfix changes.
+
+| File | Purpose |
+|---|---|
+| `Application.cfc` | An empty application, so the test has an application scope |
+| `Probe.cfc` | One shared instance (stands in for any singleton); each method returns an inline struct or array literal around the caller's token, with a short sleep inside the literal |
+| `index.cfm` | Builds once single-threaded, then starts N threads at the same instant, each building many times with its own token, and reports the result |
+| `Shapes.cfc`, `shapes.cfm` | Thirty-three code shapes that build a literal; the page lists which ones leave a temporary in `variables` |
+
+Open `/hotfixrepro/scopeleak/index.cfm` (`?threads=32&reps=100&ms=2` to change the load), and
+`/hotfixrepro/scopeleak/shapes.cfm` for the shape table (`?json=1` for JSON).
+
+**What happens.** The ColdFusion compiler stores every inline literal in a temporary variable
+named `___IMPLICITARRYSTRUCTVAR<n>`. For a literal in a plain statement it declares that
+temporary as a local. For a literal inside a conditional expression, `cond ? { ... } : { ... }`
+or `x ?: { ... }`, it does not, so inside a function the temporary is written to the component's
+`variables` scope (measured 2026-10-13 on Update 21 and Update 23: nine of thirty-three shapes
+leak, all nine are the conditional ones). One shared instance has one `variables` scope, so
+concurrent threads overwrite each other's half-built struct and a thread gets back a struct
+carrying another thread's token. WireBox's `Builder.buildCFC` builds every constructor argument
+collection with that shape. The fourth hotfix keeps the temporary in the function's local scope.
+The page reports both symptoms: leaked `___IMPLICIT...` keys in the shared instance's `variables`
+scope (visible even single-threaded), and values that came back carrying another thread's token.

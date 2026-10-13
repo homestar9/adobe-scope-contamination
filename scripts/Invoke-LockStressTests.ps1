@@ -22,8 +22,9 @@
     Test server name from scripts\TestServers.ps1 (u23, lock-u23, buggy, perclass-u23).
 
 .PARAMETER Probes
-    Probes to run, in order. Default p4,p3,p5,p6,p7,p1. Add p2 explicitly (it is moved to
-    the end regardless of where it is listed).
+    Probes to run, in order. Default p4,p3,p5,p6,p7,p8,p1. Add p2 explicitly (it is moved to
+    the end regardless of where it is listed). p8 is the shared-compiler-temporary probe that
+    Adobe's fourth hotfix targets; it fails on stock, v1 and v3 by design.
 
 .PARAMETER Ms
     P1 pseudo-constructor sleep in milliseconds.
@@ -46,7 +47,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string]   $Server,
-    [string[]] $Probes    = @( 'p4', 'p3', 'p5', 'p6', 'p7', 'p1' ),
+    [string[]] $Probes    = @( 'p4', 'p3', 'p5', 'p6', 'p7', 'p8', 'p1' ),
     [string]   $OutputDir = '',
     [int]      $Ms        = 200,
     [ValidateSet( 'short', 'long' )]
@@ -67,7 +68,7 @@ if ( -not ( Test-Path $OutputDir ) ) { New-Item -ItemType Directory -Path $Outpu
 
 # Accept both -Probes p1,p2 and -Probes 'p1,p2' (the latter is what powershell -File passes).
 $Probes = @( $Probes | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ } )
-$known  = @( 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7' )
+$known  = @( 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8' )
 foreach ( $p in $Probes ) { if ( $known -notcontains $p ) { throw "Unknown probe '$p'. Known: $( $known -join ', ' )" } }
 $runP2  = $Probes -contains 'p2'
 $ordered = @( $Probes | Where-Object { $_ -ne 'p2' } | Select-Object -Unique )
@@ -279,6 +280,12 @@ foreach ( $probe in $ordered ) {
             if ( $call.response -and $call.response.detail.PSObject.Properties.Name -contains 'mapGrowth' ) {
                 $row.verdict = "mapGrowth=$($call.response.detail.mapGrowth)"
             }
+        }
+        'p8' {
+            # The shared compiler temporary (Adobe v4's target): 32 threads x 50 builds of three
+            # literal forms on one singleton. verdict = crossings and leaked keys.
+            $call = Invoke-TortureCall -Name 'p8-tempvar' -PathAndQuery '/torture/p8?threads=32&reps=50&ms=2' -TimeoutSec 180
+            $null = Add-ProbeResult -Probe 'p8' -Variant 'tempvar' -Call $call -NoDump
         }
         'p1' {
             # One call per pair so one hung pair cannot hide the others. Each rep's join is

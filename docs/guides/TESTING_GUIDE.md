@@ -13,8 +13,9 @@ from `/repro/status`, and new lines in `logs/contamination_log.txt` and `logs/re
 |---|---|
 | `-Endpoints alpha,bravo` | The default: the two Quick entity workloads that share `BaseEntity` |
 | `-Endpoints alpha,wire` or `wire,wire` | `wire` builds six unrelated WireBox components per request and checks every value; it tests whether contamination can cross between classes that share no parent (it never has) |
-| `-ColdStart` | Restarts the test server before each session |
-| `-WarmRequests N` | Sends N single requests before the concurrent load. Use it with `-ColdStart` to keep the separate startup crash out of a contamination measurement |
+| `-Endpoints tempvar,tempvar` | `tempvar` asks a shared singleton to build three inline literals around the request's token, no database. It is the exact mechanism Adobe's fourth hotfix changes (a compiler temporary shared through the singleton's `variables` scope) |
+| `-ColdStart` | Restarts the test server before each session, waits until it answers, and warms it with 500 single requests (`-WarmRequests` to change the count). A burst against a freshly started, un-warmed server is refused: the startup crash is a separate issue |
+| `-WarmRequests N` | Sends N single requests before the concurrent load |
 | `-Sessions`, `-TotalRequests`, `-Connections` | Size of the test; `-Connections` is per endpoint |
 | `-OutputDir` | Pass an absolute path |
 
@@ -33,7 +34,8 @@ defined once in `scripts/TestServers.ps1`:
 | `u23` | 60843 | `.engine/bench-u23` | 2023.0.23 | none | stock reference |
 | `lock-u23` | 60844 | `.engine/bench-lock-u23` | 2023.0.23 | adobe-v1 | v1: the correctness bar and the rejected global-lock cost |
 | `buggy` | 60845 | `.engine/bench-buggy` | 2023.0.21 | none | known-bad check; no-lock speed reference |
-| `perclass-u23` | 60848 | `.engine/bench-perclass-u23` | 2023.0.23 | adobe-v3 | the new hotfix server |
+| `perclass-u23` | 60848 | `.engine/bench-perclass-u23` | 2023.0.23 | adobe-v3 | v3: per-class locks, rejected in September 2026 |
+| `localtemp-u23` | 60852 | `.engine/bench-localtemp-u23` | 2023.0.23 | adobe-v4 | v4: no lock, compiler temporaries kept in the function local scope; the new hotfix server |
 | `lucee6` | 60850 | `.engine/bench-lucee6` | Lucee 6 | none | no contamination bug; cross-engine performance reference |
 | `boxlang` | 60851 | `.engine/bench-boxlang` | BoxLang 1 + bx-compat-cfml | none | no contamination bug; cross-engine performance reference (needs Java 21) |
 | `concmap-u23` | 60849 | `.engine/bench-concmap-u23` | 2023.0.23 | concmap-v1 (ours) | opt-in calibration for the fresh-start contamination test; `-Servers concmap-u23` |
@@ -67,8 +69,9 @@ FusionReactor, which instruments method entry and would tax the exact path under
 | `/benchmark/control?count=N` | The request and loop with no CFC construction. The overhead baseline. |
 | `/benchmark/construct?count=N&shape=S[&n=W][&ms=M]` | Constructs `count` fresh CFCs and reads each instance's `variables` scope. |
 | `/benchmark/quickconstruct?count=N` | Constructs a fresh Quick entity and query builder per iteration, no database. Every Quick entity extends `BaseEntity`, so this is the shared-ancestor case. |
-| `/benchmark/engine` | Reports the ColdFusion build, JVM, update jars, which jar each patched class was loaded from, and the runtime lock fingerprint (`global` / `perclass` / `none`, read off `TemplateProxyFactory`'s static fields). |
-| `/torture/*` | Lock stress tests (deadlock, named-lock interlock, lock leak, thread-in-constructor); see `handlers/Torture.cfc` and `scripts/Invoke-LockStressTests.ps1`. |
+| `/benchmark/engine` | Reports the ColdFusion build, JVM, update jars, which jar each patched class was loaded from, the runtime lock fingerprint (`global` / `perclass` / `none`, read off `TemplateProxyFactory`'s static fields), and where inline-literal temporaries land (`shared-variables` before v4, `function-local` with v4). |
+| `/torture/*` | Lock stress tests (deadlock, named-lock interlock, lock leak, thread-in-constructor) and `p8`, the shared-compiler-temporary probe; see `handlers/Torture.cfc` and `scripts/Invoke-LockStressTests.ps1`. |
+| `/repro/tempvar` | One request = three inline literals built by a shared singleton; HTTP 500 and a `TEMPVAR_CROSSING` log line when a value comes back carrying another request's token. |
 
 `shape` selects the probe. The original three construct the same class on every iteration,
 which is the worst case for any construction lock:
@@ -123,8 +126,8 @@ in `scripts/TestServers.ps1`.
 
 # Or step by step. Correctness first: the known-bad check must show contamination.
 .\scripts\Test-Contamination.ps1 -Server buggy -Sessions 1
-.\scripts\Test-Contamination.ps1 -Server perclass-u23 -ColdStart
-.\scripts\Test-Contamination.ps1 -Server perclass-u23 -ColdStart -Sessions 1 -WarmRequests 500 -Label warm
+.\scripts\Test-Contamination.ps1 -Server localtemp-u23 -ColdStart                 # fresh JVM per session, 500 serial requests, then the burst
+.\scripts\Test-Contamination.ps1 -Server localtemp-u23 -Endpoints tempvar,tempvar  # the mechanism alone, no database
 
 # Throughput: the real workload, then the synthetic shapes
 .\scripts\Invoke-RealWorkloadBenchmark.ps1 -StopDropbox
@@ -132,17 +135,19 @@ in `scripts/TestServers.ps1`.
 .\scripts\Invoke-ConstructionBenchmark.ps1 -Endpoint quickconstruct
 .\scripts\Invoke-ConstructionBenchmark.ps1 -Widths 1,4,16
 
-# Name the lock, then try to break it
-.\scripts\Get-LockEvidence.ps1 -Server perclass-u23 -Endpoint repro
-.\scripts\Invoke-LockStressTests.ps1 -Server perclass-u23
-.\scripts\Invoke-LockStressTests.ps1 -Server perclass-u23 -Probes p2      # deadlock probe: restarts the test server afterwards
-.\scripts\Invoke-LockSoak.ps1 -Server perclass-u23
+# Name the lock (or show there is none), then try to break it
+.\scripts\Get-LockEvidence.ps1 -Server localtemp-u23 -Endpoint repro
+.\scripts\Invoke-LockStressTests.ps1 -Server localtemp-u23
+.\scripts\Invoke-LockStressTests.ps1 -Server localtemp-u23 -Probes p2      # deadlock probe: restarts the test server afterwards
+.\scripts\Invoke-LockSoak.ps1 -Server localtemp-u23
 ```
 
-A fresh-start contamination test usually leaves the server in a state where every request
-fails until it is restarted. `Invoke-AdobeV3TestRun.ps1` restarts every test server and warms it
-up with single requests before any throughput or lock-evidence step. Do the same when running
-steps by hand (`Invoke-RealWorkloadBenchmark.ps1` does its own warm-up).
+Every burst in every test hits a server that is online and warmed. The separate startup crash
+(a freshly started server failing every request under immediate concurrent load) is filed with
+Adobe on its own and is not measured here; `Test-Contamination.ps1` refuses a cold burst.
+`Invoke-AdobeV3TestRun.ps1` restarts every test server and warms it up with single requests
+before any throughput or lock-evidence step. Do the same when running steps by hand
+(`Invoke-RealWorkloadBenchmark.ps1` does its own warm-up).
 
 `Install-TestServers.ps1` refuses to continue unless every test server loads the classes its
 table row says (v1 must carry `TemplateProxy`/`UDFMethod`/`Closure`; v3 must not), reports the
@@ -176,7 +181,8 @@ out the same on every test server.
 ## Reading the results
 
 Each test writes a timestamped `summary-*.md` and `manifest-*.json` under
-`benchmark-results-u23/adobe-v3/`. Medians across repeat runs are used rather than means so one
+`benchmark-results-u23/<round>/` (`adobe-v4` since October 2026; September's v3 results stay
+under `adobe-v3`). Medians across repeat runs are used rather than means so one
 Windows hiccup cannot skew a cell. Throughput is bombardier's `rps.mean`. This tree is synced by
 Dropbox, so latency figures and any latency-subtraction metric are unreliable here: compare RPS
 ratios within one session, and thread-dump evidence, and nothing else.

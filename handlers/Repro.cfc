@@ -79,6 +79,47 @@ component extends="coldbox.system.RestHandler" {
 		return { "ok" : true, "probes" : 6, "thread" : getThreadName() };
 	}
 
+	/**
+	 * GET /repro/tempvar
+	 *
+	 * The mechanism Adobe's fourth hotfix changes, one build per request so bombardier can drive
+	 * it like the other endpoints. Asks the TempVarProbe SINGLETON to build an inline struct, an
+	 * inline array and an invoke() argument struct around this request's token, with a short
+	 * sleep inside each literal. Before v4 the literal's compiler temporary lives in the
+	 * singleton's variables scope, shared by every request, so under concurrent load a request
+	 * gets back another request's value. A mismatch is logged as TEMPVAR_CROSSING and returns
+	 * HTTP 500. No database.
+	 */
+	function tempvar( event, rc, prc ) {
+		var token = createUUID();
+		var probe = getInstance( "models.torture.TempVarProbe" );
+		var bad   = [];
+		try {
+			var s = probe.build( token, 2 );
+			if ( s.token != token || s.again != token ) bad.append( "struct got " & s.token & " / " & s.again );
+			var a = probe.buildArray( token, 2 );
+			if ( a[ 1 ] != token || a[ 2 ] != token ) bad.append( "array got " & a[ 1 ] & " / " & a[ 2 ] );
+			var v = probe.buildViaInvoke( token, 2 );
+			if ( v != token ) bad.append( "invoke got " & v );
+		} catch ( any e ) {
+			var classified = recordCorruption(
+				"tempvar",
+				e.message,
+				e.keyExists( "detail" ) ? e.detail : "",
+				e.keyExists( "type" ) ? e.type : "",
+				e.keyExists( "stackTrace" ) ? e.stackTrace : ""
+			);
+			event.setHTTPHeader( statusCode = 500, statusText = "Repro Error" );
+			return { "ok" : false, "corruption" : classified, "error" : e.message, "thread" : getThreadName() };
+		}
+		if ( bad.len() ) {
+			var classified = recordCorruption( "tempvar", "TEMPVAR_CROSSING expected " & token & ": " & bad.toList( " | " ) );
+			event.setHTTPHeader( statusCode = 500, statusText = "Repro Error" );
+			return { "ok" : false, "corruption" : classified, "problems" : bad, "thread" : getThreadName() };
+		}
+		return { "ok" : true, "builds" : 3, "thread" : getThreadName() };
+	}
+
 	// GET /repro/status — current contamination tally for this app instance
 	function status( event, rc, prc ) {
 		return {
@@ -223,6 +264,10 @@ component extends="coldbox.system.RestHandler" {
 		if ( haystack contains "wire_crossing" ) {
 			// /repro/wire: a WireBox-built probe held a value that belongs to another request.
 			type = "WIRE_CROSSING";
+		} else if ( haystack contains "tempvar_crossing" ) {
+			// /repro/tempvar: an inline literal built by a shared singleton came back holding
+			// another request's value (the compiler temporary shared through variables).
+			type = "TEMPVAR_CROSSING";
 		} else if ( haystack contains "invalid column name" || haystack contains "invalid object name" ) {
 			// UPDATE hit the wrong table (it lacks the other entity's FK column).
 			type = "TABLE_NAME_CONTAMINATION";

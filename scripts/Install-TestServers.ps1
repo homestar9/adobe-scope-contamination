@@ -8,7 +8,8 @@
         u23           60843   ACF 2023.0.23, no jar            stock reference
         lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
         buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
-        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (under test)
+        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected)
+        localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock, compiler temporaries kept local (under test)
 
     Flow: start each test server once so CommandBox installs the engine, stop them all (a jar copied
     into a running server is not picked up), place each test server's pinned jar under the ORIGINAL
@@ -17,7 +18,9 @@
 
       - /benchmark/engine classSources: TemplateProxyFactory from the hotfix jar or not;
         TemplateProxy/UDFMethod/Closure from the hotfix jar (v1) or not (v3, stock);
+      - /benchmark/engine classSources: NeoPageContext from the hotfix jar (v4) or not;
       - /benchmark/engine constructionLocks: the runtime lock fingerprint (global / perclass / none);
+      - /benchmark/engine implicitTemps: where inline-literal temporaries land (shared-variables / function-local);
       - the deployed jar's SHA256 equals the pinned constant for that test server;
       - every test server on the same JVM.
 
@@ -44,7 +47,7 @@
 .EXAMPLE
     .\scripts\Install-TestServers.ps1 -SkipInstall -ClearFelixCache
 .EXAMPLE
-    .\scripts\Install-TestServers.ps1 -Servers perclass-u23
+    .\scripts\Install-TestServers.ps1 -Servers localtemp-u23
 #>
 [CmdletBinding()]
 param(
@@ -58,7 +61,7 @@ $ErrorActionPreference = 'Stop'
 . ( Join-Path $PSScriptRoot 'TestServers.ps1' )
 
 $serverSet = Select-TestServers -Names $Servers
-if ( -not $OutputDir ) { $OutputDir = Join-Path $BenchRepoRoot 'benchmark-results-u23\adobe-v3\identity' }
+if ( -not $OutputDir ) { $OutputDir = Join-Path $BenchRepoRoot "benchmark-results-u23\$BenchRound\identity" }
 
 # ---------------------------------------------------------------- source jars
 foreach ( $srv in $serverSet ) { Assert-BenchJarSource -Server $srv }
@@ -128,7 +131,8 @@ try {
         Write-Host "  JVM        : $($id.jvmVersion) ($($id.jvmVendor))"
         if ( $srv.Family -ne 'adobe' ) { continue }
         Write-Host "  Lock design: $($id.constructionLocks.design)"
-        foreach ( $c in @( $BenchTpfClass ) + $BenchPerInstanceClasses + $BenchOtherClasses ) {
+        if ( $id.PSObject.Properties.Name -contains 'implicitTemps' ) { Write-Host "  Literal temporaries: $($id.implicitTemps.design) (variables: $( @( $id.implicitTemps.inVariables ).Count ), local: $( @( $id.implicitTemps.inLocal ).Count ))" }
+        foreach ( $c in @( $BenchTpfClass ) + $BenchPerInstanceClasses + $BenchOtherClasses + @( $BenchPageContextClass ) ) {
             Write-Host ( "  {0,-42} {1}" -f ( $c -replace '^coldfusion\.(runtime|util)\.', '' ), ( Split-Path -Leaf $id.classSources.$c ) )
         }
     }
@@ -137,8 +141,8 @@ try {
     Write-Host "Identity JSON saved under $OutputDir" -ForegroundColor Green
     Write-Host "`nNEXT (do NOT skip): confirm the buggy test server still reproduces contamination, so it is a valid known-bad check:" -ForegroundColor Yellow
     Write-Host "  .\scripts\Test-Contamination.ps1 -Server buggy -TotalRequests 20000 -Connections 20"
-    Write-Host "then the fresh-start contamination test on the new hotfix server:" -ForegroundColor Yellow
-    Write-Host "  .\scripts\Test-Contamination.ps1 -Server perclass-u23 -ColdStart -TotalRequests 100000 -Connections 20 -Sessions 3"
+    Write-Host "then the contamination test on the new hotfix server (fresh JVMs, each warmed with 500 serial requests first):" -ForegroundColor Yellow
+    Write-Host "  .\scripts\Test-Contamination.ps1 -Server localtemp-u23 -ColdStart -TotalRequests 100000 -Connections 20 -Sessions 3"
 }
 finally {
     Pop-Location

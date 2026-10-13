@@ -11,12 +11,14 @@
     deployed under the ORIGINAL filename hf202300-4232227.jar so classloader precedence is
     identical across test servers; only the bytes differ, which is why every jar has a pinned SHA here.
 
-    Test servers (Update 23 test run, September 2026):
+    Test servers (Update 23 test runs, September and October 2026):
 
         u23           60843   ACF 2023.0.23, no jar            stock reference
         lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
         buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
-        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (under test)
+        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected)
+        localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock; compiler temporaries kept in the
+                                                               function local scope (under test)
         lucee6        60850   Lucee 6, no jar                  no contamination bug: performance reference
         boxlang       60851   BoxLang 1 (CFML compat), no jar  no contamination bug: performance reference
 
@@ -37,6 +39,7 @@ $BenchHotfixJars = [ordered]@{
     'adobe-v1' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v1.jar'; Sha = '7B586D55814B120FB818EAB7EF16DD83336449A6088162D627F114A6CC352C56'; Note = 'v1: per-instance fixes in 4 classes + global synchronized construction lock' }
     'adobe-v2' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v2.jar'; Sha = '137889D7741E1D2F1763B0698CAF37B405878C7472FDC1BF14051092FFB06FC6';   Note = 'v2: ExprAssembler only, byte-identical to stock Update 23 (never deployed)' }
     'adobe-v3' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v3.jar'; Sha = 'EFB0AA56912C3C7046DA47BBCC1FC28776A9F9AA1D18FBBF09CF1A3CE4780B0E'; Note = 'v3: TemplateProxyFactory only, per-class ReentrantLock held with all ancestor locks' }
+    'adobe-v4' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v4.jar'; Sha = '9D17AD33BB1D845D0303346905A2C0E8CA3FA6D4E2E087A45590C3FEAE4C5E81'; Note = 'v4: NeoPageContext only, compiler temporaries for inline literals kept in the function local scope, no lock' }
     # Our own build (docs/root-cause/contamination-investigation-and-startup-crash-fix.md): v1 plus a CFConcurrentHashMap-backed CaseInsensitiveMap.
     'concmap-v1' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-concmap-v1.jar'; Sha = '4943E46A045C15D9D32E0C2D108F00CC0001C5694D9D222A10B85780F32C985A'; Note = 'v1 + concurrent CaseInsensitiveMap; the cleanest build measured (0/300k cold, Aug 2026)' }
 }
@@ -64,7 +67,14 @@ $TestServers = @(
         Name = 'perclass-u23'; Config = 'server-bench-perclass-u23.json'; Home = '.engine\bench-perclass-u23'; Port = 60848
         Engine = 'adobe@2023.0.23'; Jar = 'adobe-v3'
         ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $false; LockDesign = 'perclass'; Family = 'adobe'
-        Role = 'Adobe v3: per-class construction locks, under test'
+        Role = 'Adobe v3: per-class construction locks (rejected September 2026)'
+    },
+    [pscustomobject]@{
+        Name = 'localtemp-u23'; Config = 'server-bench-localtemp-u23.json'; Home = '.engine\bench-localtemp-u23'; Port = 60852
+        Engine = 'adobe@2023.0.23'; Jar = 'adobe-v4'
+        ExpectClean = $true;   TpfFromHotfix = $false; PerInstanceFromHotfix = $false; LockDesign = 'none'; Family = 'adobe'
+        PageContextFromHotfix = $true
+        Role = 'Adobe v4: no lock, compiler temporaries kept in the function local scope, under test'
     },
     # Cross-engine performance references. Neither engine has the contamination bug (see
     # docs/root-cause/how-lucee-and-boxlang-avoid-it.md), so they show what the same application costs on an
@@ -119,13 +129,16 @@ $BenchProfiles = @{
     }
 }
 
+# The round every script writes under. September's v3 results stay in benchmark-results-u23\adobe-v3.
+$BenchRound = 'adobe-v4'
+
 function Get-BenchResultsRoot {
     <#
-        Results are kept per profile so a short run can never overwrite a long run's raw JSON:
-            benchmark-results-u23\adobe-v3\<profile>\<kind>[-<test server>[-<label>]]
+        Results are kept per round and per profile so a short run can never overwrite a long run's raw JSON:
+            benchmark-results-u23\<round>\<profile>\<kind>[-<test server>[-<label>]]
     #>
     param( [Parameter(Mandatory)] [string] $Profile, [Parameter(Mandatory)] [string] $Kind )
-    return Join-Path $BenchRepoRoot "benchmark-results-u23\adobe-v3\$Profile\$Kind"
+    return Join-Path $BenchRepoRoot "benchmark-results-u23\$BenchRound\$Profile\$Kind"
 }
 
 function Use-BenchProfile {
@@ -144,10 +157,12 @@ function Use-BenchProfile {
     Write-Host "profile: $Profile ($Section)" -ForegroundColor DarkGray
 }
 
-# The six classes /benchmark/engine reports a code source for.
+# The seven classes /benchmark/engine reports a code source for.
 $BenchTpfClass         = 'coldfusion.runtime.TemplateProxyFactory'
 $BenchPerInstanceClasses = @( 'coldfusion.runtime.TemplateProxy', 'coldfusion.runtime.UDFMethod', 'coldfusion.runtime.Closure' )
 $BenchOtherClasses     = @( 'coldfusion.runtime.ObjectDuplicator', 'coldfusion.util.CaseInsensitiveMap' )
+# Adobe v4 ships only this class; no other jar may overlay it.
+$BenchPageContextClass = 'coldfusion.runtime.NeoPageContext'
 
 function Select-TestServers {
     <# Returns the test server objects for the given names (all test servers when none given), in table order. #>
@@ -322,6 +337,7 @@ function Assert-TestServerIdentity {
           - TemplateProxy/UDFMethod/Closure from the hotfix jar, or not, per PerInstanceFromHotfix
             (v1 ships them, v3 does not, and that difference is itself a finding);
           - ObjectDuplicator/CaseInsensitiveMap never from a hotfix jar in this test run;
+          - NeoPageContext from the hotfix jar only on a PageContextFromHotfix server (v4);
           - the runtime lock fingerprint (constructionLocks) matches LockDesign;
           - the deployed jar bytes match the pinned SHA.
     #>
@@ -348,6 +364,10 @@ function Assert-TestServerIdentity {
         if ( $allowed -and $s -notmatch 'hf202300-4232227' ) { throw "${name}: $c is not loaded from the concmap jar ($s)." }
         if ( -not $allowed -and $s -match 'hf202300-4232227' ) { throw "${name}: $c is loaded from a hotfix jar ($s); this test server's jar must not overlay it." }
     }
+    $pageCtxFromHotfix = ( $Server.PSObject.Properties.Name -contains 'PageContextFromHotfix' ) -and $Server.PageContextFromHotfix
+    $pc = $src.$BenchPageContextClass
+    if ( $pageCtxFromHotfix -and $pc -notmatch 'hf202300-4232227' ) { throw "${name}: $BenchPageContextClass is not loaded from the hotfix jar ($pc); the v4 fix is missing." }
+    if ( -not $pageCtxFromHotfix -and $pc -match 'hf202300-4232227' ) { throw "${name}: $BenchPageContextClass is loaded from a hotfix jar ($pc) but this test server's jar must not carry it." }
     if ( $Identity.PSObject.Properties.Name -contains 'constructionLocks' ) {
         $design = $Identity.constructionLocks.design
         if ( $design -ne $Server.LockDesign ) { throw "${name}: runtime lock fingerprint is '$design' but the table says '$($Server.LockDesign)'." }
@@ -376,6 +396,7 @@ function Get-TestServerIdentities {
         Assert-TestServerIdentity -Server $srv -Identity $id
         $identities[ $srv.Name ] = $id
         $lockInfo = if ( $id.PSObject.Properties.Name -contains 'constructionLocks' ) { " lock=$($id.constructionLocks.design)" } else { '' }
+        if ( $id.PSObject.Properties.Name -contains 'implicitTemps' ) { $lockInfo += " temps=$($id.implicitTemps.design)" }
         $engine   = if ( $id.PSObject.Properties.Name -contains 'productName' ) { $id.productName } else { 'CF' }
         Write-Host "  $($srv.Name): $engine $($id.productVersion), JVM $($id.jvmVersion)$lockInfo"
         if ( $SaveTo ) {

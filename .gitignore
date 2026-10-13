@@ -24,7 +24,7 @@ tools/**
 build/**
 
 # Adobe proprietary hotfix binaries and locally modified derivatives. Do not redistribute.
-# Expected on disk: hf202300-4232227-adobe-v1.jar, -adobe-v2.jar, -adobe-v3.jar (Adobe downloads)
+# Expected on disk: hf202300-4232227-adobe-v1.jar, -adobe-v2.jar, -adobe-v3.jar, -adobe-v4.jar (Adobe downloads)
 # and -concmap-v1.jar (our v1 + concurrent-map build, rebuilt by scripts/archive/Build-UnlockedJar.ps1).
 hotfixes/*.jar
 

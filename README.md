@@ -8,7 +8,7 @@ table (`UPDATE [user_type] ...` instead of `UPDATE [remote_app_remote_carrier] .
 This repository is a self-contained reproduction (ColdBox + Quick ORM + SQL Server, both
 unmodified) and the record of every test run against Adobe's hotfixes.
 
-## Status (September 2026)
+## Status (October 2026)
 
 | Engine | Contaminated requests under concurrent load | Cost |
 |---|---|---|
@@ -16,12 +16,24 @@ unmodified) and the record of every test run against Adobe's hotfixes.
 | + Adobe's first hotfix | none seen in 550,000 | throughput roughly halved |
 | + Adobe's second hotfix | same as no hotfix | none |
 | + Adobe's third hotfix | about 1 in 180,000 (5 in 900,000) | 18% to 24% slower, and a new permanent deadlock |
+| **+ Adobe's fourth hotfix** | **none in 60,000 so far (the 1,300,000-request run is in progress)** | **none: no lock, same speed as no hotfix** |
 | Lucee 6.2 | none in 70,000 | no construction lock needed |
 | BoxLang 1.17 | none in 160,000 | no construction lock needed |
 
+The fourth hotfix is the first that removes the sharing instead of locking around it. The cause
+turned out to be one compiler detail: the temporary variable ColdFusion creates for a struct or
+array literal written inside a conditional expression (`cond ? { ... } : { ... }`) was never
+declared as a local, so inside a shared component it landed in that component's `variables`
+scope, where concurrent requests overwrote each other's half-built struct. WireBox builds every
+constructor argument collection that way. The hotfix keeps the temporary in the function's local
+scope ([analysis](docs/adobe-hotfixes/4-fourth-hotfix-static-analysis.md),
+[results](docs/adobe-hotfixes/4-fourth-hotfix-results.md),
+[standalone reproduction](hotfixrepro/scopeleak/)).
+
 ColdFusion also has a separate startup bug: a freshly started server under immediate
 concurrent load can throw a `NullPointerException` and then fail every request until restart.
-None of Adobe's hotfixes change it. A one-line change, verified here, fixes it without a lock
+None of Adobe's hotfixes change it, and it is being reported to Adobe as its own issue. A
+one-line change, verified here, fixes it without a lock
 ([details](docs/root-cause/contamination-investigation-and-startup-crash-fix.md)).
 
 ## History
@@ -53,12 +65,21 @@ None of Adobe's hotfixes change it. A one-line change, verified here, fixes it w
   ([analysis](docs/adobe-hotfixes/3-third-hotfix-static-analysis.md),
   [results](docs/adobe-hotfixes/3-third-hotfix-results.md),
   [contamination and other engines](docs/adobe-hotfixes/3-third-hotfix-contamination-and-other-engines.md))
-- **Next.** We have asked Adobe for a fix that stops construction state being shared between
-  requests, the way Lucee and BoxLang work, instead of locking around it.
+- **October 2026: the fourth hotfix.** No lock at all. One method in `NeoPageContext` changes
+  so that the compiler temporary for a literal inside a conditional expression stays in the
+  function's local scope instead of the component's shared `variables` scope. That is the
+  shared slot the August probes had pinned to WireBox's `Builder.buildCFC` without being able to
+  name it. No contamination, every lock stress test and the deadlock demo pass, and throughput
+  matches a server with no hotfix. A standalone three-file reproduction shows the leak on every
+  earlier build and not on this one.
+  ([analysis](docs/adobe-hotfixes/4-fourth-hotfix-static-analysis.md),
+  [results](docs/adobe-hotfixes/4-fourth-hotfix-results.md))
+- **Next.** The report-grade run (1,300,000 requests, 45-minute endurance) completes
+  2026-10-14; then the startup crash goes to Adobe as a separate case.
 
-In these documents "v1", "v2" and "v3" mean Adobe's first, second and third hotfix
-(`hf202300-4232227`). The August research notes in `docs/research-log/` also used "v3" to "v5"
-for our own experimental builds; each of those notes says which it means.
+In these documents "v1" to "v4" mean Adobe's first to fourth hotfix (`hf202300-4232227`). The
+August research notes in `docs/research-log/` also used "v3" to "v5" for our own experimental
+builds; each of those notes says which it means.
 
 ## Reproduce it
 
@@ -177,14 +198,22 @@ If you are using FusionReactor (recommended), you can see the scope contaminatio
 For large, repeatable measurements across test servers, use the harness described in
 [docs/guides/TESTING_GUIDE.md](docs/guides/TESTING_GUIDE.md).
 
-## The third hotfix's deadlock, in four files
+## Two standalone reproductions, no framework needed
 
-[`hotfixrepro/deadlock/`](hotfixrepro/deadlock/) needs no ColdBox, ORM or database. Put the
-`hotfixrepro` folder in the web root of a ColdFusion 2023 server and open
-`/hotfixrepro/deadlock/index.cfm`. It passes on Update 23 and on the first hotfix. On the third
-hotfix it reports `DEADLOCK` after 10 seconds, and `jcmd <pid> Thread.print -l` shows
-`Found one Java-level deadlock` in `TemplateProxyFactory.resolveName`. Restart ColdFusion
-afterwards. Details in [hotfixrepro/README.md](hotfixrepro/README.md).
+[`hotfixrepro/`](hotfixrepro/) needs no ColdBox, ORM or database. Put the folder in the web root
+of a ColdFusion 2023 server.
+
+- `/hotfixrepro/scopeleak/index.cfm`: the contamination mechanism itself. One shared component
+  builds literals inside a conditional expression for 32 threads at once. On Update 23 with no
+  hotfix, with the first or with the third hotfix, about half of the builds come back carrying
+  another thread's value and the compiler temporaries show up in the shared `variables` scope.
+  On the fourth hotfix it passes. `shapes.cfm` lists which code shapes leak.
+- `/hotfixrepro/deadlock/index.cfm`: the third hotfix's deadlock. It passes on Update 23, on the
+  first hotfix and on the fourth. On the third it reports `DEADLOCK` after 10 seconds, and
+  `jcmd <pid> Thread.print -l` shows `Found one Java-level deadlock` in
+  `TemplateProxyFactory.resolveName`. Restart ColdFusion afterwards.
+
+Details in [hotfixrepro/README.md](hotfixrepro/README.md).
 
 ## Documentation
 
@@ -207,11 +236,12 @@ config/Router.cfc                   /repro/*, /benchmark/* and /torture/* routes
 models/AlphaParent|AlphaChild       entity pair A  (alpha_child.alpha_parent_id)
 models/BravoParent|BravoChild       entity pair B  (bravo_child.bravo_parent_id)
 models/wire/                        six unrelated WireBox components for /repro/wire
-handlers/Repro.cfc                  alpha / bravo / wire / status / stress endpoints + logging
+handlers/Repro.cfc                  alpha / bravo / wire / tempvar / status / stress endpoints + logging
 handlers/Benchmark.cfc              database-free construction endpoints and /benchmark/engine
-handlers/Torture.cfc                lock stress tests for the hotfixes (deadlock, cflock, leaks, threads)
+handlers/Torture.cfc                lock stress tests for the hotfixes (deadlock, cflock, leaks, threads, shared temporary)
 interceptors/ContaminationDetector  catches a wrong-table UPDATE before SQL Server does
 models/lockprobe/, models/torture/  components the construction and lock tests build
+hotfixrepro/scopeleak/              standalone reproduction of the contamination mechanism (fixed by the fourth hotfix)
 hotfixrepro/deadlock/               standalone deadlock reproduction for the third hotfix
 resources/schema.sql                SQL Server schema + seed
 scripts/                            the test harness (see docs/guides/TESTING_GUIDE.md)

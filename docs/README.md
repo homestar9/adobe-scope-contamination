@@ -14,7 +14,7 @@ history, then [background](#background), then the hotfix results.
 
 ## Adobe's hotfixes
 
-All three are builds of hotfix `hf202300-4232227`, numbered in the order they arrived.
+All four are builds of hotfix `hf202300-4232227`, numbered in the order they arrived.
 
 | Document | What it covers |
 |---|---|
@@ -25,6 +25,8 @@ All three are builds of hotfix `hf202300-4232227`, numbered in the order they ar
 | [3-third-hotfix-static-analysis.md](adobe-hotfixes/3-third-hotfix-static-analysis.md) | What the third hotfix changes (per-class locks), with predictions made before testing |
 | [3-third-hotfix-results.md](adobe-hotfixes/3-third-hotfix-results.md) | Its lock stress tests, lock evidence, endurance test and first throughput results |
 | [3-third-hotfix-contamination-and-other-engines.md](adobe-hotfixes/3-third-hotfix-contamination-and-other-engines.md) | The large contamination test (900,000 requests), its throughput cost under heavy load, and Lucee 6 and BoxLang on the same application |
+| [4-fourth-hotfix-static-analysis.md](adobe-hotfixes/4-fourth-hotfix-static-analysis.md) | What the fourth hotfix changes (one method, no lock: compiler temporaries kept in the function local scope), why that is the cause found in August, and the predictions made before testing |
+| [4-fourth-hotfix-results.md](adobe-hotfixes/4-fourth-hotfix-results.md) | Its contamination tests, the mechanism probe, lock evidence, lock stress tests, throughput and endurance results |
 
 ## Root cause
 

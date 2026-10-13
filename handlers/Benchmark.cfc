@@ -138,8 +138,41 @@ component extends="coldbox.system.RestHandler" {
 			"rootDir"        : rootDir,
 			"updateJars"     : updates,
 			"classSources"   : classSources(),
-			"constructionLocks" : constructionLocks()
+			"constructionLocks" : constructionLocks(),
+			"implicitTemps"  : implicitTemps()
 		};
+	}
+
+	/**
+	 * Behavioral fingerprint of Adobe's fourth hotfix, no reflection needed: build inline
+	 * literals inside conditional expressions in this (singleton) handler and report where the
+	 * compiler's temporaries (`___IMPLICITARRYSTRUCTVAR<n>`) ended up. For that shape (and only
+	 * that shape; a literal in a plain statement is declared as a local by the compiler) unfixed
+	 * engines put the temporary in the component's variables scope; v4 keeps it in the function's
+	 * local scope. Lucee and BoxLang have no such temporaries, so both lists are empty there.
+	 */
+	private struct function implicitTemps() {
+		var out = { "inVariables" : [], "inLocal" : [], "design" : "unknown" };
+		try {
+			var never = variables.keyExists( "implicitTempsNeverSet" );
+			var s = never ? {} : { "a" : 1, "b" : { "c" : [ 1, 2 ] } };
+			var a = never ? [] : [ { "d" : 4 }, 5 ];
+			var n = implicitTempsEcho( never ? {} : { "e" : 6 } );
+			for ( var key in structKeyArray( variables ) ) {
+				if ( left( key, 11 ) == "___IMPLICIT" ) out.inVariables.append( key );
+			}
+			for ( var key in structKeyArray( local ) ) {
+				if ( left( key, 11 ) == "___IMPLICIT" ) out.inLocal.append( key );
+			}
+			out.design = out.inVariables.len() ? "shared-variables" : ( out.inLocal.len() ? "function-local" : "none" );
+		} catch ( any e ) {
+			out.design = "unavailable: " & e.message;
+		}
+		return out;
+	}
+
+	private numeric function implicitTempsEcho( required struct s ) {
+		return structCount( arguments.s );
 	}
 
 	/**
@@ -160,7 +193,12 @@ component extends="coldbox.system.RestHandler" {
 			"coldfusion.runtime.ObjectDuplicator",
 			// The concmap-family fixes (concmap, concmap-v1) patch CaseInsensitiveMap. On those
 			// test servers this must resolve to the hf202300-4232227.jar overlay.
-			"coldfusion.util.CaseInsensitiveMap"
+			"coldfusion.util.CaseInsensitiveMap",
+			// Adobe's fourth hotfix (v4) ships ONLY NeoPageContext: compiler temporaries for inline
+			// struct/array literals are kept in the function's local scope instead of the component's
+			// variables scope. On the v4 test server this must resolve to the hf202300-4232227.jar
+			// overlay; on every other test server it resolves to chf20230023.jar.
+			"coldfusion.runtime.NeoPageContext"
 		];
 		var sources = {};
 
