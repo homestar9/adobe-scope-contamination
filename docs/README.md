@@ -27,6 +27,7 @@ All four are builds of hotfix `hf202300-4232227`, numbered in the order they arr
 | [3-third-hotfix-contamination-and-other-engines.md](adobe-hotfixes/3-third-hotfix-contamination-and-other-engines.md) | The large contamination test (900,000 requests), its throughput cost under heavy load, and Lucee 6 and BoxLang on the same application |
 | [4-fourth-hotfix-static-analysis.md](adobe-hotfixes/4-fourth-hotfix-static-analysis.md) | What the fourth hotfix changes (one method, no lock: compiler temporaries kept in the function local scope), why that is the cause found in August, and the predictions made before testing |
 | [4-fourth-hotfix-results.md](adobe-hotfixes/4-fourth-hotfix-results.md) | Its contamination tests, the mechanism probe, lock evidence, lock stress tests, throughput and endurance results |
+| [5-final-v4-vs-stock.md](adobe-hotfixes/5-final-v4-vs-stock.md) | One page: stock Update 23 against the fourth hotfix, is the contamination fixed and does it cost speed |
 
 ## Root cause
 

@@ -27,6 +27,11 @@ for the third hotfix's server and `-IncludeOtherEngines` for Lucee 6 and BoxLang
 measures the test servers in the order given to `-Servers`, so `-Servers localtemp-u23,u23`
 puts the new hotfix server first.
 
+`scripts/Invoke-FinalComparison.ps1` is the short form for two servers only, stock Update 23
+against the fourth hotfix: about 45 minutes, contamination and mechanism tests on both, then
+real-workload and Quick-construction throughput alternated between them, ending with a
+`summary.md` computed from the raw files ([results](../adobe-hotfixes/5-final-v4-vs-stock.md)).
+
 ## Test servers
 
 The hotfix lives in the engine directory, not the application, so every comparison uses

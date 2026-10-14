@@ -32,6 +32,7 @@ scope, where concurrent requests overwrote each other's half-built struct. WireB
 constructor argument collection that way. The hotfix keeps the temporary in the function's local
 scope ([analysis](docs/adobe-hotfixes/4-fourth-hotfix-static-analysis.md),
 [results](docs/adobe-hotfixes/4-fourth-hotfix-results.md),
+[final comparison with stock](docs/adobe-hotfixes/5-final-v4-vs-stock.md),
 [standalone reproduction](hotfixrepro/scopeleak/)).
 
 ColdFusion also has a separate startup bug: a freshly started server under immediate
@@ -77,7 +78,8 @@ one-line change, verified here, fixes it without a lock
   matches a server with no hotfix. A standalone three-file reproduction shows the leak on every
   earlier build and not on this one.
   ([analysis](docs/adobe-hotfixes/4-fourth-hotfix-static-analysis.md),
-  [results](docs/adobe-hotfixes/4-fourth-hotfix-results.md))
+  [results](docs/adobe-hotfixes/4-fourth-hotfix-results.md),
+  [final comparison with stock](docs/adobe-hotfixes/5-final-v4-vs-stock.md))
 - **Next.** The startup crash goes to Adobe as a separate case.
 
 In these documents "v1" to "v4" mean Adobe's first to fourth hotfix (`hf202300-4232227`). The
