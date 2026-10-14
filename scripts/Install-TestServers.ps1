@@ -42,18 +42,25 @@
     drifted, after which OSGi packages silently fail to install and the test server runs FASTER
     than it should. Recommended before a measurement test run.
 
+.PARAMETER StopOnly
+    Stop the selected test servers and exit: frees each port, kills any JVM left over from an
+    interrupted start of that server home, and removes stale pid files. Cleanup between rounds.
+
 .EXAMPLE
     .\scripts\Install-TestServers.ps1
 .EXAMPLE
     .\scripts\Install-TestServers.ps1 -SkipInstall -ClearFelixCache
 .EXAMPLE
     .\scripts\Install-TestServers.ps1 -Servers localtemp-u23
+.EXAMPLE
+    .\scripts\Install-TestServers.ps1 -StopOnly
 #>
 [CmdletBinding()]
 param(
     [string[]] $Servers = @(),
     [switch]   $SkipInstall,
     [switch]   $ClearFelixCache,
+    [switch]   $StopOnly,
     [string]   $OutputDir = ''
 )
 
@@ -62,6 +69,15 @@ $ErrorActionPreference = 'Stop'
 
 $serverSet = Select-TestServers -Names $Servers
 if ( -not $OutputDir ) { $OutputDir = Join-Path $BenchRepoRoot "benchmark-results-u23\$BenchRound\identity" }
+
+# ---------------------------------------------------------------- stop only (cleanup between rounds)
+if ( $StopOnly ) {
+    foreach ( $srv in $serverSet ) {
+        Stop-TestServer -Server $srv
+        Write-Host "  $($srv.Name) stopped (port $($srv.Port) free, orphaned JVMs and pid files removed)."
+    }
+    return
+}
 
 # ---------------------------------------------------------------- source jars
 foreach ( $srv in $serverSet ) { Assert-BenchJarSource -Server $srv }

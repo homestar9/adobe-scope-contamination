@@ -330,8 +330,10 @@ Reading:
   (their only literals are plain statements, which the compiler already declares as locals). A
   re-measurement on freshly restarted JVMs with v4 first in the order was started at 19:27 and
   stopped by the machine's memory guard before it produced numbers; it is the one open item in
-  this document. Until it runs, the plain-construct row for v4 stands as "unexplained in the
-  long profile, on the gauge in the short profile and on the ORM path".
+  this document and the first job of the second, confirming run (results folder
+  `benchmark-results-u23/adobe-v4-run2/`, section 9 once it exists). Until then, the
+  plain-construct row for v4 stands as "unexplained in the long profile, on the gauge in the
+  short profile and on the ORM path".
 
 ### 8c. Endurance, 45 minutes, v4 and the no-lock control
 

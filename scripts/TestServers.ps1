@@ -130,7 +130,9 @@ $BenchProfiles = @{
 }
 
 # The round every script writes under. September's v3 results stay in benchmark-results-u23\adobe-v3.
-$BenchRound = 'adobe-v4'
+# Set BENCH_ROUND in the environment to write a repeat run next to the first instead of over it,
+# e.g. $env:BENCH_ROUND = 'adobe-v4-run2' (the second, confirming run of the fourth hotfix).
+$BenchRound = if ( $env:BENCH_ROUND ) { $env:BENCH_ROUND } else { 'adobe-v4' }
 
 function Get-BenchResultsRoot {
     <#
@@ -273,6 +275,12 @@ function Stop-TestServer {
     $serverPid = Get-TestServerPid $Server
     if ( $serverPid ) {
         Stop-Process -Id $serverPid -Force -ErrorAction SilentlyContinue
+    }
+    # A start that was interrupted (for example by a memory guard killing the shell) can leave a JVM
+    # for this server home that never got as far as listening. Its command line names the home.
+    $serverHome = Get-TestServerHome $Server
+    foreach ( $orphan in @( Get-CimInstance Win32_Process -Filter "Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains( "$serverHome\" ) -and $_.ProcessId -ne $serverPid } ) ) {
+        Stop-Process -Id $orphan.ProcessId -Force -ErrorAction SilentlyContinue
     }
     if ( -not ( Wait-BenchPortFree -Port $Server.Port -TimeoutSeconds $TimeoutSeconds ) ) {
         throw "$($Server.Name): port $($Server.Port) is still listening after stop."

@@ -182,7 +182,9 @@ out the same on every test server.
 
 Each test writes a timestamped `summary-*.md` and `manifest-*.json` under
 `benchmark-results-u23/<round>/` (`adobe-v4` since October 2026; September's v3 results stay
-under `adobe-v3`). Medians across repeat runs are used rather than means so one
+under `adobe-v3`). A repeat of a round goes next to the first, never over it: set
+`$env:BENCH_ROUND = 'adobe-v4-run2'` in the shell before running the scripts and every one of
+them writes under that folder. Medians across repeat runs are used rather than means so one
 Windows hiccup cannot skew a cell. Throughput is bombardier's `rps.mean`. This tree is synced by
 Dropbox, so latency figures and any latency-subtraction metric are unreliable here: compare RPS
 ratios within one session, and thread-dump evidence, and nothing else.
