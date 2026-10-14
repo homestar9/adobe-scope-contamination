@@ -16,9 +16,13 @@ unmodified) and the record of every test run against Adobe's hotfixes.
 | + Adobe's first hotfix | none seen in 550,000 | throughput roughly halved |
 | + Adobe's second hotfix | same as no hotfix | none |
 | + Adobe's third hotfix | about 1 in 180,000 (5 in 900,000) | 18% to 24% slower, and a new permanent deadlock |
-| **+ Adobe's fourth hotfix** | **none in 60,000 so far (the 1,300,000-request run is in progress)** | **none: no lock, same speed as no hotfix** |
+| **+ Adobe's fourth hotfix** | **none in 1,540,000 (1,300,000 of them on the real workload); the same afternoon the first hotfix leaked 1 in 100,000 and the third 6 in 200,000** | **none: no lock, same speed as no hotfix** |
 | Lucee 6.2 | none in 70,000 | no construction lock needed |
 | BoxLang 1.17 | none in 160,000 | no construction lock needed |
+
+The comparison that matters is the first three rows against the fourth: no hotfix, the first
+hotfix (the lock that has been in production), and the fourth. The second hotfix was never a
+change, and the third is only the build before this one.
 
 The fourth hotfix is the first that removes the sharing instead of locking around it. The cause
 turned out to be one compiler detail: the temporary variable ColdFusion creates for a struct or
@@ -74,8 +78,7 @@ one-line change, verified here, fixes it without a lock
   earlier build and not on this one.
   ([analysis](docs/adobe-hotfixes/4-fourth-hotfix-static-analysis.md),
   [results](docs/adobe-hotfixes/4-fourth-hotfix-results.md))
-- **Next.** The report-grade run (1,300,000 requests, 45-minute endurance) completes
-  2026-10-14; then the startup crash goes to Adobe as a separate case.
+- **Next.** The startup crash goes to Adobe as a separate case.
 
 In these documents "v1" to "v4" mean Adobe's first to fourth hotfix (`hf202300-4232227`). The
 August research notes in `docs/research-log/` also used "v3" to "v5" for our own experimental

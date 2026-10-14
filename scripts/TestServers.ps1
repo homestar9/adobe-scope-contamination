@@ -16,9 +16,9 @@
         u23           60843   ACF 2023.0.23, no jar            stock reference
         lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
         buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
-        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected)
         localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock; compiler temporaries kept in the
-                                                               function local scope (under test)
+                                                               function local scope (the fix, October 2026)
+        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected; opt-in)
         lucee6        60850   Lucee 6, no jar                  no contamination bug: performance reference
         boxlang       60851   BoxLang 1 (CFML compat), no jar  no contamination bug: performance reference
 
@@ -66,8 +66,8 @@ $TestServers = @(
     [pscustomobject]@{
         Name = 'perclass-u23'; Config = 'server-bench-perclass-u23.json'; Home = '.engine\bench-perclass-u23'; Port = 60848
         Engine = 'adobe@2023.0.23'; Jar = 'adobe-v3'
-        ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $false; LockDesign = 'perclass'; Family = 'adobe'
-        Role = 'Adobe v3: per-class construction locks (rejected September 2026)'
+        ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $false; LockDesign = 'perclass'; Family = 'adobe'; OptIn = $true
+        Role = 'Adobe v3: per-class construction locks (rejected September 2026; opt-in, the comparison that matters is stock / v1 / v4)'
     },
     [pscustomobject]@{
         Name = 'localtemp-u23'; Config = 'server-bench-localtemp-u23.json'; Home = '.engine\bench-localtemp-u23'; Port = 60852

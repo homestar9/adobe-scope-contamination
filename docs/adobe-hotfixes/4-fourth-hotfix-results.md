@@ -9,8 +9,11 @@ requests, and only then applies concurrent load.
 
 ## Verdict
 
-**v4 fixes the contamination at its cause, with no lock, and costs nothing.** Short profile,
-2026-10-13; the long profile (section 8) is the report-grade confirmation.
+**v4 fixes the contamination at its cause, with no lock, and costs nothing on the real
+workload.** Short profile and long profile, both 2026-10-13 (sections 1 to 8). One open item:
+one long-profile sweep of the three database-free plain-construct shapes had v4 at 0.6 to 0.9 of
+stock, unexplained, while the same shapes that morning and the ORM construction path the same
+hour were on the no-lock gauge; a re-measurement on fresh JVMs is pending (section 8b).
 
 1. **The cause is named and removed.** The crossing object the August probe caught in WireBox's
    `Builder.buildCFC` is a struct literal inside a ternary expression. The compiler never
@@ -18,9 +21,10 @@ requests, and only then applies concurrent load.
    `variables` scope, shared by every concurrent request. v4 keeps it in the function's local
    scope. Three new probes show the leak on every earlier build (about half of all builds come
    back carrying another thread's value; stock, v1 and v3 alike) and never on v4 (section 1).
-2. **No contamination.** 0 in 40,000 real-workload requests across two fresh, warmed JVMs,
-   and 0 in 20,000 on the mechanism endpoint where Update 21 fails a third of its requests
-   (section 2). The known-bad check reproduced the bug the same hour.
+2. **No contamination.** 0 in 1,300,000 real-workload requests across 13 fresh, warmed JVMs at
+   20 and 64 connections per endpoint, and 0 in 240,000 on the probe endpoints where Update 21
+   fails a third of its requests (sections 2 and 8a). The same afternoon, on the same machine,
+   v1 leaked 1 in 100,000 and v3 6 in 200,000, and the unfixed engines 6.7% to 10.9%.
 3. **No lock.** 0 threads waiting in `resolveName` under 64 in flight (v1 the same hour: 37
    per dump); every lock stress test identical to stock; the third hotfix's deadlock demo passes
    in 105 ms, and P8 passes (sections 3 and 4).
@@ -233,8 +237,115 @@ every check that is about the hotfix, v4 is clean: no errors, no deadlock, no wa
 a heap that cycles normally, and no lock map to grow. The 45-minute long-profile run repeats
 this with the same control.
 
-## 8. Long profile (overnight 2026-10-13 to 14)
+## 8. Long profile (2026-10-13, 12:45 onwards)
 
-(filled in when the run completes: contamination 1,000,000 at 20 connections and 300,000 at 64,
-`alpha + wire`, `tempvar` at 20 and 64, real-workload at 1/8/32/64 with 3 x 30 s, construction
-shapes with 3 x 20 s, 45-minute endurance on v4 and on the no-lock control)
+`scripts/Invoke-ScopeContaminationRound.ps1 -NewHotfixServer localtemp-u23`, then the
+45-minute endurance tests. Dropbox stopped for the whole run, Backblaze paused. Raw results:
+`benchmark-results-u23/adobe-v4/scope-round/` and `long/`.
+
+### 8a. Contamination, 1,300,000 requests on v4
+
+Every session restarts its server, waits until it answers, sends 500 serial requests, then
+bursts. Same machine, same afternoon, for every row.
+
+| Test server | Endpoints | Connections per endpoint | Sessions | Requests | Contaminated requests | Rate | Requests/s |
+|---|---|---|---|---|---|---|---|
+| **`localtemp-u23` (v4)** | alpha + bravo | 20 | 10 | **1,000,000** | **0** | | 162 to 203 |
+| **`localtemp-u23` (v4)** | alpha + bravo | 64 | 3 | **300,000** | **0** | | 140 to 151 |
+| **`localtemp-u23` (v4)** | alpha + wire | 20 | 1 | 40,000 | **0** | | 531 |
+| **`localtemp-u23` (v4)** | tempvar + tempvar | 20 | 1 | 100,000 | **0** | | 1,112 |
+| **`localtemp-u23` (v4)** | tempvar + tempvar | 64 | 1 | 100,000 | **0** | | 1,150 |
+| `lock-u23` (v1, global lock) | alpha + bravo | 20 | 1 | 100,000 | 1 (a wrong-table `UPDATE`) | 1 in 100,000 | 108 |
+| `perclass-u23` (v3, per-class locks) | alpha + bravo | 20 | 2 | 200,000 | 6 (4 wrong-table `UPDATE`s, 2 relationship setters on a query builder) | 1 in 33,000 | 154, 160 |
+| `u23` (stock Update 23) | alpha + bravo | 20 | 2 | 40,000 | 2,665 | 6.7% | 212, 214 |
+| `buggy` (Update 21) | alpha + bravo | 20 | 2 | 40,000 | 2,733 | 6.8% | 207, 214 |
+| `buggy` (Update 21) | alpha + bravo | 64 | 1 | 20,000 | 2,181 | 10.9% | 182 |
+| `buggy` (Update 21) | tempvar + tempvar | 20 | 1 | 20,000 | 8,009 | 40% | 1,290 |
+
+Reading:
+
+- **v4 is clean in 1,540,000 requests**, 1,300,000 of them on the production ORM path at normal
+  and heavy load. Zero in 1,300,000 rules out any rate above about 1 in 430,000 (95%), which is
+  far below what v1 and v3 showed the same afternoon.
+- **v1 leaked today.** Its one failure is the production symptom: an `UPDATE` compiled against
+  the wrong table. September's 0 in 550,000 was the other side of the coin (it also leaked once
+  in 20,000 in August). The global lock narrows the window but does not close it, because the
+  shared slot is written outside the locked region.
+- **v3 leaked 6 in 200,000**, a worse rate than September's 5 in 900,000, with the same
+  signatures.
+- The unfixed engines are at their usual 6.7% to 6.8% at 20 connections and 10.9% at 64; on
+  the mechanism endpoint Update 21 fails 40% of requests.
+
+### 8b. Real-workload and construction throughput, 3 runs per point
+
+**Real workload** (`/repro/alpha` + `/repro/bravo`, 3 runs of 30 s per point, servers alternated
+per measurement, each restarted and warmed with 300 serial requests first). Median requests per
+second; a server losing more than 10% of its requests to the bug is marked invalid and its raw
+runs are quoted instead. Summary: `scope-round/repro-throughput/summary-20261013-165052.md`.
+
+| Connections per endpoint | u23 (stock) | err% | buggy (U21, no lock) | err% | lock-u23 (v1) | perclass-u23 (v3) | **localtemp-u23 (v4)** | p99 v4 | p99 stock | p99 v1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 36.4 | 3.0 | 41.0 | 2.2 | 35.1 | 29.9 | 28.3 | 113 ms | 73 ms | 77 ms |
+| 8 | 186.8 | 5.7 | 179.8 | 4.9 | 99.9 | 181.9 | **196.9** | 132 ms | 147 ms | 234 ms |
+| 32 | invalid (10.6% failing; runs 159, 158, 173) | 10.6 | 172.0 | 9.0 | 91.2 | 150.9 | **172.0** | 592 ms | 672 ms | 899 ms |
+| 64 | invalid (10.8%; runs 176, 169, 180) | 10.8 | invalid (10.6%; runs 177, 166, 169) | 10.6 | 88.5 | 141.8 | **176.8** | 1,223 ms | 1,150 ms | 1,710 ms |
+
+Raw runs at 32 connections: v4 166 / 172 / 183, Update 21 172 / 157 / 175, stock 159 / 158 / 173.
+At 64: v4 182 / 149 / 177, stock 176 / 169 / 180, Update 21 177 / 166 / 169.
+
+Reading:
+
+- **From 8 connections up, v4 serves as many requests as the servers with no hotfix, or more,
+  with 0 failures where they lose 5% to 11% to the bug**: 1.05 times stock at 8, level with the
+  no-lock server at 32 and 64. v1 is at 0.5; v3 at 0.8 to 0.97. The 5% pass bar is met.
+- **The 1-connection row is machine drift, not the hotfix.** At one connection throughput is
+  pure latency, and every server's three runs there swing by up to two to one (stock 36 / 43 /
+  25, v1 35 / 41 / 20, v3 43 / 29 / 30, v4 38 / 28 / 21). v4 was measured last in each round and
+  its later runs fell in a slow period; its first run equals stock's. The short profile the same
+  morning had v4 at 0.97 of stock at one connection, and nothing can contend there.
+
+**Database-free construction** (3 runs of 20 s per point, 32 and 64 connections; the no-lock
+Update 21 server is the noise gauge). Summaries: `scope-round/construct/summary-20261013-173938.md`,
+`scope-round/quickconstruct/summary-20261013-175559.md`.
+
+| Shape | v4 / stock at 32, 64 | gauge (U21 / stock) | v1 / stock | v3 / stock |
+|---|---|---|---|---|
+| `quickconstruct` (Quick entity + builder, the ORM path) | **0.90, 1.00** | 0.84, 0.95 | 0.37, 0.29 | 0.64, 0.51 |
+| `narrow` (one class) | 0.71, 0.91 | 1.08, 0.94 | 0.43, 0.53 | 0.46, 0.55 |
+| `fanout` (16 unrelated classes) | 0.62, 0.76 | 1.01, 1.06 | 0.45, 0.54 | 1.01, 1.00 |
+| `siblings` (16 classes sharing a base) | 0.76, 0.83 | 1.06, 0.99 | 0.33, 0.41 | 0.27, 0.35 |
+
+Reading:
+
+- On the ORM construction path, `quickconstruct`, v4 sits on the no-lock gauge at every load
+  level (1.06 of stock at one connection, 0.90 at 32, 1.00 at 64), as it did in the short
+  profile. v1 is at a third, v3 at half to two thirds.
+- **The three plain-construct shapes show a deficit for v4 in this one sweep that the evidence
+  does not explain**: 0.62 to 0.91 of stock with the gauge at 1.0, steady across all three runs of
+  every point, including one connection, where nothing contends. The same shapes on the same
+  JVM the same morning (section 6) had v4 on the gauge (0.89 to 0.95 against 0.84 to 0.89), and
+  `quickconstruct`, measured on the same JVM immediately after this sweep, shows no deficit. The
+  five JVMs' launch lines, heap state, JIT code-cache state, residency and CPU time were compared
+  during the sweep and are alike; the probe models contain nothing on the path the fix changes
+  (their only literals are plain statements, which the compiler already declares as locals). A
+  re-measurement on freshly restarted JVMs with v4 first in the order was started at 19:27 and
+  stopped by the machine's memory guard before it produced numbers; it is the one open item in
+  this document. Until it runs, the plain-construct row for v4 stands as "unexplained in the
+  long profile, on the gauge in the short profile and on the ORM path".
+
+### 8c. Endurance, 45 minutes, v4 and the no-lock control
+
+`scripts/Invoke-LockSoak.ps1 -Profile long`: 9 five-minute slices of mixed load (`/repro/alpha`
+and `/repro/bravo` at 16 connections each, `fanout` and `quickconstruct` at 8 each), a thread
+dump and heap reading every 60 s, v4 first and the no-lock Update 21 server straight after.
+Directories: `long/soak-localtemp-u23/`, `long/soak-buggy/`.
+
+| Test server | Requests | Requests/s, slice 1 to 9 | HTTP 5xx | `resolveName` waiters per dump | Deadlock in 36 dumps | Heap |
+|---|---|---|---|---|---|---|
+| **`localtemp-u23` (v4)** | 480,396 | 292, 218, 189, 175, 181, 169, 171, 177, 177 | **0** | **0** | none | cycling 333 to 778 MB |
+| `buggy` (U21, no lock, control) | 480,270 | 293, 214, 196, 179, 175, 175, 175, 177, 167 | 36,969 (7.7%, the bug) | 0 | none | cycling 301 to 774 MB |
+
+Reading: the two curves are the same, slice for slice, on a server with the hotfix and on one
+with nothing, so the fall over the first 15 minutes is the machine's (the same drift the
+September runs saw), not the hotfix's. On every check the hotfix can influence, v4 is clean over
+45 minutes and 480,000 requests: no errors, no deadlock, no waiting threads, a cycling heap.

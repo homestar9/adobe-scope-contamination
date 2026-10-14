@@ -34,7 +34,7 @@ defined once in `scripts/TestServers.ps1`:
 | `u23` | 60843 | `.engine/bench-u23` | 2023.0.23 | none | stock reference |
 | `lock-u23` | 60844 | `.engine/bench-lock-u23` | 2023.0.23 | adobe-v1 | v1: the correctness bar and the rejected global-lock cost |
 | `buggy` | 60845 | `.engine/bench-buggy` | 2023.0.21 | none | known-bad check; no-lock speed reference |
-| `perclass-u23` | 60848 | `.engine/bench-perclass-u23` | 2023.0.23 | adobe-v3 | v3: per-class locks, rejected in September 2026 |
+| `perclass-u23` | 60848 | `.engine/bench-perclass-u23` | 2023.0.23 | adobe-v3 | v3: per-class locks, rejected in September 2026; opt-in since October (`-Servers perclass-u23`) |
 | `localtemp-u23` | 60852 | `.engine/bench-localtemp-u23` | 2023.0.23 | adobe-v4 | v4: no lock, compiler temporaries kept in the function local scope; the new hotfix server |
 | `lucee6` | 60850 | `.engine/bench-lucee6` | Lucee 6 | none | no contamination bug; cross-engine performance reference |
 | `boxlang` | 60851 | `.engine/bench-boxlang` | BoxLang 1 + bx-compat-cfml | none | no contamination bug; cross-engine performance reference (needs Java 21) |
