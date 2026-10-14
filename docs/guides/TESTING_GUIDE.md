@@ -21,7 +21,11 @@ from `/repro/status`, and new lines in `logs/contamination_log.txt` and `logs/re
 
 `scripts/Invoke-ScopeContaminationRound.ps1` runs the full overnight round used for the
 September 2026 results: large warmed contamination tests on every test server at 20 and 64
-connections per endpoint, then real-workload and construction throughput on all six.
+connections per endpoint, then real-workload and construction throughput on all six. Since
+October 2026 it runs stock, v1, Update 21 and the new hotfix server; add `-IncludeThirdHotfix`
+for the third hotfix's server and `-IncludeOtherEngines` for Lucee 6 and BoxLang. Every script
+measures the test servers in the order given to `-Servers`, so `-Servers localtemp-u23,u23`
+puts the new hotfix server first.
 
 ## Test servers
 

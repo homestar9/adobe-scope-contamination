@@ -24,6 +24,10 @@
 .PARAMETER IncludeOtherEngines
     Also run Lucee 6 and BoxLang (their September 2026 numbers are otherwise reused).
 
+.PARAMETER IncludeThirdHotfix
+    Also run the third hotfix's test server, perclass-u23 (opt-in since October 2026; the
+    comparison that matters is stock / v1 / v4).
+
 .EXAMPLE
     .\scripts\Invoke-ScopeContaminationRound.ps1
 .EXAMPLE
@@ -35,6 +39,7 @@ param(
     [string[]] $Phases = @( 'contamination', 'realworkload', 'construction' ),
     [string]   $NewHotfixServer = 'localtemp-u23',
     [switch]   $IncludeOtherEngines,
+    [switch]   $IncludeThirdHotfix,
     [string]   $OutputRoot = ''
 )
 
@@ -44,7 +49,7 @@ if ( -not $OutputRoot ) { $OutputRoot = Join-Path $BenchRepoRoot "benchmark-resu
 if ( -not ( Test-Path $OutputRoot ) ) { New-Item -ItemType Directory -Path $OutputRoot | Out-Null }
 $LogPath = Join-Path $OutputRoot "round-$( Get-Date -Format 'yyyyMMdd-HHmmss' ).log"
 $scripts = $PSScriptRoot
-$all = @( @( 'u23', 'lock-u23', 'buggy', 'perclass-u23', $NewHotfixServer ) | Select-Object -Unique )
+$all = @( @( 'u23', 'lock-u23', 'buggy', $( if ( $IncludeThirdHotfix ) { 'perclass-u23' } ), $NewHotfixServer ) | Where-Object { $_ } | Select-Object -Unique )
 if ( $IncludeOtherEngines ) { $all += @( 'lucee6', 'boxlang' ) }
 $new = $NewHotfixServer
 
@@ -89,7 +94,9 @@ if ( $Phases -contains 'contamination' ) {
     Step "contamination: $new tempvar 20 conns"                { Contam -Server $new         -Endpoints tempvar,tempvar -Connections 20 -PerSession 100000 -Sessions 1 -Label tv-c20 }
     Step "contamination: $new tempvar 64 conns"                { Contam -Server $new         -Endpoints tempvar,tempvar -Connections 64 -PerSession 100000 -Sessions 1 -Label tv-c64 }
     # The earlier hotfixes, same workload, same day, for comparison (their large runs are in the September results).
+    if ( $all -contains 'perclass-u23' ) {
     Step 'contamination: perclass-u23 (v3) 20 conns'           { Contam -Server perclass-u23 -Endpoints alpha,bravo     -Connections 20 -PerSession 100000 -Sessions 2 -Label ab-c20 }
+    }
     Step 'contamination: lock-u23 (v1) 20 conns'               { Contam -Server lock-u23     -Endpoints alpha,bravo     -Connections 20 -PerSession 100000 -Sessions 1 -Label ab-c20 }
     Step 'contamination: buggy 64 conns'                       { Contam -Server buggy        -Endpoints alpha,bravo     -Connections 64 -PerSession 20000  -Sessions 1 -Label ab-c64 }
     if ( $IncludeOtherEngines ) {

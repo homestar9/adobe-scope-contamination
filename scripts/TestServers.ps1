@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     The one test server table and the helpers every benchmark script shares. Dot-source it:
 
@@ -167,7 +167,9 @@ $BenchOtherClasses     = @( 'coldfusion.runtime.ObjectDuplicator', 'coldfusion.u
 $BenchPageContextClass = 'coldfusion.runtime.NeoPageContext'
 
 function Select-TestServers {
-    <# Returns the test server objects for the given names (all test servers when none given), in table order. #>
+    <# Returns the test server objects for the given names, in the order given (so a caller can put
+       one test server first in the measurement order), or every default test server in table order
+       when no names are given. #>
     param( [string[]] $Names )
     if ( -not $Names -or $Names.Count -eq 0 ) {
         # Default set: every test server that is not opt-in AND is installed (engine home exists).
@@ -183,7 +185,7 @@ function Select-TestServers {
     foreach ( $n in $Names ) {
         if ( $known -notcontains $n ) { throw "Unknown test server '$n'. Known test servers: $( $known -join ', ' )" }
     }
-    return @( $TestServers | Where-Object { $Names -contains $_.Name } )
+    return @( @( $Names | Select-Object -Unique ) | ForEach-Object { $n = $_; $TestServers | Where-Object { $_.Name -eq $n } } )
 }
 
 function Get-TestServer {

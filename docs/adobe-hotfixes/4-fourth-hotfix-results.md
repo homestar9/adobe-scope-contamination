@@ -1,6 +1,7 @@
 # Adobe's fourth hotfix (`hf202300-4232227-adobe-v4.jar`): test results
 
-Date: 2026-10-13. Static analysis and the predictions made before any run are in
+Date: 2026-10-13, confirmed by a second full run on 2026-10-14 (section 9). Static analysis and
+the predictions made before any run are in
 [4-fourth-hotfix-static-analysis.md](4-fourth-hotfix-static-analysis.md). Raw output for every
 table is under `benchmark-results-u23/adobe-v4/` (gitignored; the directory is named in each
 section). The startup crash on a freshly started server is a separate issue, filed with Adobe on
@@ -10,10 +11,13 @@ requests, and only then applies concurrent load.
 ## Verdict
 
 **v4 fixes the contamination at its cause, with no lock, and costs nothing on the real
-workload.** Short profile and long profile, both 2026-10-13 (sections 1 to 8). One open item:
-one long-profile sweep of the three database-free plain-construct shapes had v4 at 0.6 to 0.9 of
-stock, unexplained, while the same shapes that morning and the ORM construction path the same
-hour were on the no-lock gauge; a re-measurement on fresh JVMs is pending (section 8b).
+workload.** Short profile and long profile on 2026-10-13 (sections 1 to 8), **confirmed by a
+second full run** on freshly started test servers on 2026-10-14 (section 9): every line of the
+pass bar held again. The first run's one open item is resolved. One long-profile sweep had v4 at
+0.6 to 0.9 of stock on the three database-free plain-construct shapes; in the second run that
+deficit came and went on the same processes within an hour, moved from shape to shape, and
+appeared at the same size on stock, which has no hotfix. It is per-process variation of those
+shapes, not the hotfix (section 9a).
 
 1. **The cause is named and removed.** The crossing object the August probe caught in WireBox's
    `Builder.buildCFC` is a struct literal inside a ternary expression. The compiler never
@@ -24,14 +28,17 @@ hour were on the no-lock gauge; a re-measurement on fresh JVMs is pending (secti
 2. **No contamination.** 0 in 1,300,000 real-workload requests across 13 fresh, warmed JVMs at
    20 and 64 connections per endpoint, and 0 in 240,000 on the probe endpoints where Update 21
    fails a third of its requests (sections 2 and 8a). The same afternoon, on the same machine,
-   v1 leaked 1 in 100,000 and v3 6 in 200,000, and the unfixed engines 6.7% to 10.9%.
+   v1 leaked 1 in 100,000 and v3 6 in 200,000, and the unfixed engines 6.7% to 10.9%. The
+   second run repeated all of it: 0 in another 1,540,000 on v4, v1 again 1 in 100,000, the
+   unfixed engines 7.9% to 12.1% (section 9d).
 3. **No lock.** 0 threads waiting in `resolveName` under 64 in flight (v1 the same hour: 37
    per dump); every lock stress test identical to stock; the third hotfix's deadlock demo passes
    in 105 ms, and P8 passes (sections 3 and 4).
 4. **No cost.** Real workload at or above the servers with no hotfix at every load level and
    the lowest p99 of the five at 32 connections (v3 was 0.76 to 0.82 of stock, v1 0.44 to 0.53).
    Database-free construction within noise of the no-lock server on every shape, where v1 and
-   v3 lost half to three quarters (sections 5 and 6).
+   v3 lost half to three quarters (sections 5 and 6); those shapes move by 30% to 40% between
+   sweeps on servers with no hotfix too (section 9a).
 5. **Stable over time** on every check the hotfix can influence (section 7).
 
 What v4 does not change: the separate startup crash on a freshly started server under immediate
@@ -123,7 +130,7 @@ engine. The large runs (1,000,000 at 20 connections, 300,000 at 64) are in secti
 
 ### 2b. Long profile
 
-(filled in after the overnight run)
+In section 8a (first run) and section 9d (second run).
 
 ## 3. Lock evidence
 
@@ -306,7 +313,7 @@ Reading:
 
 **Database-free construction** (3 runs of 20 s per point, 32 and 64 connections; the no-lock
 Update 21 server is the noise gauge). Summaries: `scope-round/construct/summary-20261013-173938.md`,
-`scope-round/quickconstruct/summary-20261013-175559.md`.
+`scope-round/quickconstruct/summary-20261013-175554.md`.
 
 | Shape | v4 / stock at 32, 64 | gauge (U21 / stock) | v1 / stock | v3 / stock |
 |---|---|---|---|---|
@@ -329,11 +336,9 @@ Reading:
   during the sweep and are alike; the probe models contain nothing on the path the fix changes
   (their only literals are plain statements, which the compiler already declares as locals). A
   re-measurement on freshly restarted JVMs with v4 first in the order was started at 19:27 and
-  stopped by the machine's memory guard before it produced numbers; it is the one open item in
-  this document and the first job of the second, confirming run (results folder
-  `benchmark-results-u23/adobe-v4-run2/`, section 9 once it exists). Until then, the
-  plain-construct row for v4 stands as "unexplained in the long profile, on the gauge in the
-  short profile and on the ORM path".
+  stopped by the machine's memory guard before it produced numbers. **Resolved by the second
+  run (section 9a):** the deficit is per-process variation of these database-free shapes, which
+  hits servers with no hotfix just as hard; the figures above stand as that set of processes.
 
 ### 8c. Endurance, 45 minutes, v4 and the no-lock control
 
@@ -351,3 +356,313 @@ Reading: the two curves are the same, slice for slice, on a server with the hotf
 with nothing, so the fall over the first 15 minutes is the machine's (the same drift the
 September runs saw), not the hotfix's. On every check the hotfix can influence, v4 is clean over
 45 minutes and 480,000 requests: no errors, no deadlock, no waiting threads, a cycling heap.
+
+## 9. Second run (2026-10-14)
+
+An independent repeat of the whole set of tests on the same jar, started after midnight on
+2026-10-14 on freshly started test servers: the open item from section 8b first, then the short
+profile, then the long profile. Same machine, same four test servers (`u23`, `lock-u23`,
+`buggy`, `localtemp-u23`); the third hotfix's server was left out, as were Lucee and BoxLang.
+Raw output for every table is under `benchmark-results-u23/adobe-v4-run2/` (the folder for each
+table is named under it). The pre-flight passed before anything ran: every test server loaded
+the classes its row in the test server table says, the v4 jar's SHA256 starts `9d17ad33`, Quick's
+`BaseEntity.cfc` starts `54c3fdd6`, v4 reported `function-local` literal temporaries and no
+lock, and the other three reported `shared-variables` (`identity/`).
+
+Two script changes were needed to run this as specified, and are committed with this section:
+the test server list now keeps the order it is given in (before, every script measured the
+servers in table order, so "v4 first" and "v4 last" were the same run), and the long-profile
+round leaves out the third hotfix's server unless `-IncludeThirdHotfix` is passed.
+
+### 9a. The open item: plain-construct shapes on fresh JVMs
+
+Run one's long-profile sweep had v4 at 0.62 to 0.91 of stock on the three database-free shapes
+with the Update 21 gauge at 1.0 (section 8b). Run two measured the same shapes three times on
+one set of freshly started JVMs: v4 first in the order, then quickconstruct, then the same sweep
+with the order reversed. 3 runs of 20 s per point, 10 s warm-up, Dropbox stopped. The figure is
+v4 divided by the no-lock Update 21 gauge measured in the same sweep, at 1 / 32 / 64
+connections; 1.00 means v4 is on the gauge.
+
+| Shape | Run one, long profile (v4 last) | Run two, v4 first (00:27) | Run two, v4 last (01:20) | Run two, short profile (03:07) |
+|---|---|---|---|---|
+| `narrow` | 0.68 / 0.65 / 0.96 | 0.96 / 1.01 / 0.95 | 1.10 / 1.04 / 0.95 | 0.91 / 0.88 / n/a |
+| `fanout` | 0.72 / 0.61 / 0.72 | 0.97 / **0.75 / 0.79** | 1.00 / 1.13 / 1.02 | 0.92 / 0.93 / n/a |
+| `siblings` | 0.77 / 0.72 / 0.84 | 0.78 / **1.43 / 1.29** | 1.01 / 0.98 / 1.07 | 0.93 / 0.89 / n/a |
+| `quickconstruct` (v4 / stock) | 1.07 / 0.90 / 1.00 | 0.98 / 0.96 / 0.92 | | 1.03 / 1.02 / n/a |
+
+Raw: `open-item/construct-v4-first/`, `open-item/construct-v4-last/`,
+`open-item/quickconstruct-v4-first/`, `short/construct/`, `short/quickconstruct/`; run one
+`adobe-v4/scope-round/construct/`.
+
+The servers with no hotfix moved just as much in the same hour, on the same processes:
+
+| Same JVM, same shape, 32 connections | v4 first (00:27) | v4 last (01:20) |
+|---|---|---|
+| Update 21 gauge, `fanout` | 913 requests/s | 606 requests/s |
+| stock, `siblings` | 658 | 921 |
+| v4, `siblings` | 935 | 868 |
+| v4, `fanout` | 681 | 686 |
+
+At one connection, single 20 s runs on one process flip between two speeds about a factor of
+two apart, on stock and on v4 alike (stock `siblings` 49 / 89 / 87, v4 `siblings` 41 / 41 / 92).
+The short profile's width test, run minutes after that short sweep, put v4 at 1.53 to
+1.60 times stock and 1.39 to 1.47 times the gauge on `fanout`.
+
+**Profile.** Java Flight Recorder, 60 s of `narrow` at 32 connections, one test server under load
+at a time, on the same JVMs right after the reversed sweep (`jfr/`; `*.views.txt` holds the hot
+methods, CPU load, GC pauses, deoptimizations and lock contention of each recording):
+
+| Recording | Requests/s under the recorder | Machine CPU | Hot methods |
+|---|---|---|---|
+| stock, 01:59 | 616 | 73% | date parsing and hashing under CacheBox's eviction sort (below) |
+| v4, 02:00 | **296** | **93%** | the same path, but with `FastArray.addElement` and `StructSort` on top |
+| Update 21, 02:01 | 733 | not recorded | the same path as stock |
+| v4 again, 02:21 | 463 | 88% | the same as stock, line for line |
+| stock again, 02:22 | 523 | 85% | the same as the first stock recording |
+
+Without the recorder, between the two pairs: stock 876 and 697, v4 858 and 665, Update 21 932
+and 794 (two alternating rounds of 20 s, `open-item/cookie-ab-samejvm/`). No recording shows a
+lock: no thread waiting in `resolveName`, no construction monitor, the same handful of
+deoptimizations on every server, and GC pauses of 1 to 2.6 s per minute everywhere. The one slow
+v4 recording ran while Dropbox, restarted by the benchmark script at 01:58:57, was starting up
+and the machine was at 93% CPU; ten minutes later the same v4 process profiled like stock.
+
+The recordings also show what these shapes spend their time on. On every server 35% to 63% of
+CPU samples are in ColdBox, not in construction: with `sessionManagement` off, ColdBox keeps the
+flash scope in CacheBox, the load tool sends no cookies, so every request saves a new flash key
+into a cache that is full at 300 objects, and every save runs CacheBox's LRU eviction, which
+sorts all the cache's keys by date. That code is identical on every test server, and sending a
+fixed `CFID`/`CFTOKEN` cookie did not change any server's throughput, so it does not favour one
+server, but it makes the database-free shapes a measurement of framework housekeeping as much as
+of construction, which is why they move by 30% to 40% between sweeps on servers with no hotfix.
+
+**Resolution.** The deficit is not real and not order dependent. On fresh JVMs with v4 first, one
+shape (`fanout`) came in below the gauge, another (`siblings`) came in 43% above it, and the
+third on it; an hour later on the same processes, in the reversed order, all three were on it,
+while the no-hotfix servers moved by up to 40% on single shapes. Run one's long-profile sweep was
+v4 last and showed the deficit; run two's reversed sweep was v4 last and did not. It is
+process-instance and time-dependent variation of these database-free shapes, which hits every
+server, and run one's 17:39 sweep (section 8b) stands as that process instance's figure. The
+re-measurement started at 19:27 on 2026-10-13 never produced numbers (the memory guard stopped it
+during the restart), so there are none to record from it. On the ORM construction path,
+quickconstruct, v4 was at 0.90 of stock or better in every sweep of both runs.
+
+### 9b. The mechanism
+
+**Standalone demo** (`hotfixrepro/scopeleak/index.cfm`, 32 threads x 100 builds of each of three
+literal forms, one shared instance). Builds that came back carrying another thread's token, of
+3,200 per form, as struct / array / `invoke()` argument, then errors and leaked keys after one
+single-threaded build. Run one did not run it on stock.
+
+| Run | stock | v1 | v4 | Update 21 |
+|---|---|---|---|---|
+| One (2026-10-13) | not run | 1,772 / 1,580 / 1,590; 182 errors; 1 key; FAIL | **0 / 0 / 0; 0; 0; PASS** | 1,757 / 1,544 / 1,554; 176 errors; 1 key; FAIL |
+| Two (2026-10-14, 08:53) | 1,631 / 1,497 / 1,420; 242 errors; 1 key; FAIL | 1,623 / 1,441 / 1,413; 246 errors; 1 key; FAIL | **0 / 0 / 0; 0; 0; PASS** | 1,641 / 1,444 / 1,359; 282 errors; 1 key; FAIL |
+
+Raw: `demos/scopeleak-<test server>.html`.
+
+**P8 inside the application** (`/torture/p8`, 32 threads x 50 builds on a WireBox singleton):
+crossings of 4,800 builds, and leaked keys.
+
+| Run | stock | v1 | v4 | Update 21 |
+|---|---|---|---|---|
+| One | 755, 3 | 704, 3 | **0, 0** | 794, 3 |
+| Two | 982, 3 | 609, 3 | **0, 0** | 784, 3 |
+
+Raw: `short/torture-<test server>/`, `demos/p8-buggy.json`.
+
+### 9c. Contamination test, short profile
+
+Every session ran on a server that had been restarted, answered `/benchmark/engine` and taken
+serial warm-up requests before the burst (the known-bad and `tempvar` checks run right after the
+test run's own restart and 100 serial requests). HTTP 5xx of requests sent; requests per second
+in brackets. The short profile does not run stock.
+
+| Run | Endpoints | stock | v1 | v4 | Update 21 |
+|---|---|---|---|---|---|
+| One | alpha + bravo | not run | 0 of 40,000 (102, 102) | **0 of 40,000** (166, 188) | 1,732 of 20,000, 8.7% (172) |
+| Two | alpha + bravo | not run | 0 of 40,000 (66, 68) | **0 of 40,000** (155, 155) | 1,749 of 20,000, 8.7% (146) |
+| One | tempvar + tempvar | | | **0 of 20,000** (1,321) | 6,562 of 20,000, 32.8% (1,091) |
+| Two | tempvar + tempvar | | | **0 of 20,000** (1,214) | 6,824 of 20,000, 34.1% (1,109) |
+
+Raw: `short/contamination test-<test server>-<label>/`. The known-bad check's signatures in run
+two: 1,450 `TABLE_NAME_CONTAMINATION`, 299 `VARIABLES_SCOPE_CORRUPTION`.
+
+### 9d. Contamination test, long profile
+
+`Invoke-ScopeContaminationRound.ps1`, every session restarting its server, waiting for it to
+answer, sending 500 serial requests, then bursting. Contaminated requests (HTTP 5xx) of requests
+sent.
+
+| Run | Test | stock | v1 | v4 | Update 21 |
+|---|---|---|---|---|---|
+| One | alpha + bravo, 20 conns | 2,665 of 40,000, 6.7% | 1 of 100,000 (wrong-table `UPDATE`) | **0 of 1,000,000** (10 sessions) | 2,733 of 40,000, 6.8% |
+| Two | alpha + bravo, 20 conns | 3,176 of 40,000, 7.9% | 1 of 100,000 (wrong-table query) | **0 of 1,000,000** (10 sessions) | 3,175 of 40,000, 7.9% |
+| One | alpha + bravo, 64 conns | | | **0 of 300,000** | 2,181 of 20,000, 10.9% |
+| Two | alpha + bravo, 64 conns | | | **0 of 300,000** | 2,423 of 20,000, 12.1% |
+| One | alpha + wire, 20 conns | | | **0 of 40,000** | |
+| Two | alpha + wire, 20 conns | | | **0 of 40,000** | |
+| One | tempvar, 20 and 64 conns | | | **0 of 200,000** | 8,009 of 20,000, 40% (20 conns) |
+| Two | tempvar, 20 and 64 conns | | | **0 of 200,000** | 6,705 of 20,000, 33.5% (20 conns) |
+
+Raw: `scope-round/contam-<test server>-<label>/`. v4's sessions ran at 144 to 154 requests per
+second at 20 connections and 134 to 143 at 64 (run one: 162 to 203 and 140 to 151). Every server
+was about a quarter slower in absolute terms in run two, the unfixed engines included. v1's one
+failure in run two is the production symptom again: a query for an `alpha_child` entity compiled
+against the other entity's table (`Invalid column name 'alpha_parent_id'`).
+
+Across both runs v4 is clean in 3,080,000 warmed requests, 2,600,000 of them on the real
+workload. Zero in 2,600,000 rules out any rate above about 1 in 870,000 (95%).
+
+### 9e. Lock evidence
+
+32 connections per target, 10 thread dumps one second apart. Threads waiting in
+`TemplateProxyFactory.resolveName` per dump. Stock and Update 21 are not part of this test
+(September: 0).
+
+| Run | Load | stock | v1 | v4 | Update 21 |
+|---|---|---|---|---|---|
+| One | `/repro` alpha + bravo | | 37.1, one monitor, 99.5% | **0** | |
+| Two | `/repro` alpha + bravo | | 51.1, one monitor, 99.8% | **0** | |
+| One | construct `siblings` | | | **0** | |
+| Two | construct `siblings` | | | **0** | |
+
+Raw: `short/lock-evidence/`. The only blocked threads on v4 in run two (0.8 per dump during
+`siblings`) were waiting on a `cflock` (`coldfusion.runtime.RWLock`, which CacheBox takes) and on
+ColdFusion's locale manager class, not on construction.
+
+### 9f. Lock stress tests and the deadlock demo
+
+Both runs gave the same verdict on every probe. Where a count differs, both are shown as
+"run one; run two". Update 21 is not part of the stress tests apart from P8 (section 9b).
+
+| Probe | stock | v1 | v4 |
+|---|---|---|---|
+| P1, 7 pairs | all parallel | serial except `slowinit` | **all parallel** |
+| P2 in one request, and across two | completes | completes | **completes** |
+| P3, holder is a component | ok | ok | **ok** |
+| P3, holder is plain code | ok | `cflock` timeout both | **ok** |
+| P4 | ok | ok | **ok** |
+| P5 | ok | join timeout all three | **ok** |
+| P6, P7 | ok | ok | **ok** |
+| P8 crossings | 755; 982 | 704; 609 | **0; 0** |
+| Deadlock demo | PASS; PASS in 101 ms | PASS; PASS in 201 ms | **PASS in 105 ms; PASS in 101 ms** |
+
+Raw: `short/torture-<test server>/`, `demos/deadlock-<test server>.html`.
+
+### 9g. Real-workload throughput
+
+Median requests per second for `/repro/alpha` + `/repro/bravo`, servers alternated per
+measurement, each restarted and serially warmed first. A server losing more than 10% of its
+requests to the bug is marked invalid and its raw runs are given. The last column counts only
+stock's successful requests, which is how the pass bar is defined (for an invalid stock row, the
+median of its raw runs).
+
+**Short profile** (2 runs of 10 s per point; raw `short/repro-throughput/`):
+
+| Run | Conns | stock (err%) | v1 | v4 | Update 21 (err%) | v4 / stock, successful only |
+|---|---|---|---|---|---|---|
+| One | 1 | 33.3 (2.9) | 31.7 | 32.2 | 31.9 (2.8) | 1.00 |
+| Two | 1 | 22.4 (7.5) | 22.0 | 21.9 | 22.0 (4.7) | 1.06 |
+| One | 8 | 158.5 (3.4) | 97.5 | 174.4 | 177.4 (4.2) | 1.14 |
+| Two | 8 | 169.0 (6.3) | 80.7 | 165.4 | 161.8 (4.9) | 1.04 |
+| One | 32 | 136.3 (9.1) | 80.0 | 153.2 | 138.8 (8.1) | 1.24 |
+| Two | 32 | invalid, 10.2% (164, 161) | 65.8 | 163.8 | 145.6 (7.6) | 1.12 |
+
+**Long profile** (3 runs of 30 s per point; raw `scope-round/repro-throughput/`):
+
+| Run | Conns | stock (err%) | v1 | v4 | Update 21 (err%) | v4 / stock, successful only |
+|---|---|---|---|---|---|---|
+| One | 1 | 36.4 (3.0) | 35.1 | 28.3 | 41.0 (2.2) | 0.80 |
+| Two | 1 | 37.9 (3.8) | 35.0 | 38.8 | 37.6 (3.1) | 1.06 |
+| One | 8 | 186.8 (5.7) | 99.9 | 196.9 | 179.8 (4.9) | 1.12 |
+| Two | 8 | 252.0 (3.2) | 141.1 | 236.2 | 252.3 (4.0) | 0.97 |
+| One | 32 | invalid, 10.6% (159, 158, 173) | 91.2 | 172.0 | 172.0 (9.0) | 1.21 |
+| Two | 32 | 197.2 (8.8) | 107.2 | 195.1 | 199.1 (9.2) | 1.09 |
+| One | 64 | invalid, 10.8% (176, 169, 180) | 88.5 | 176.8 | invalid, 10.6% | 1.13 |
+| Two | 64 | invalid, 10.1% (180, 181, 177) | 98.3 | 185.6 | invalid, 10.2% | 1.15 |
+
+Reading: v4 passes the 5% bar at 8, 32 and 64 connections in both runs. The one figure that
+reads lower in run two is the long profile at 8 connections: 0.94 of stock's raw rate (run one
+1.05), 0.97 counting only stock's successful requests. v4's three runs there were 255, 236 and
+236, and Update 21 dropped to 214 in the same middle run, so the dip is the machine's. From about
+07:50 onwards, during this table's last points and everything after it, the machine was also in
+use for other work. v1 is at 0.48 to 0.56 of stock, as in run one.
+
+### 9h. Database-free construction
+
+Ratios against stock at 32 and 64 connections (short profile: 32 only). Read with section 9a:
+these shapes move by 30% to 40% between sweeps on servers with no hotfix.
+
+| Run | Shape | v1 | v4 | Update 21 (the gauge) |
+|---|---|---|---|---|
+| One, short | `narrow` | 0.48 | 0.89 | 0.87 |
+| Two, short | `narrow` | 0.47 | 0.92 | 1.04 |
+| One, short | `fanout` | 0.44 | 0.91 | 0.89 |
+| Two, short | `fanout` | 0.39 | 0.96 | 1.04 |
+| One, short | `siblings` | 0.33 | 0.95 | 0.88 |
+| Two, short | `siblings` | 0.25 | 0.94 | 1.05 |
+| One, short | `quickconstruct` | 0.39 | 0.90 | 0.84 |
+| Two, short | `quickconstruct` | 0.34 | 1.02 | 0.96 |
+| One, long | `narrow` | 0.43, 0.53 | 0.71, 0.91 | 1.08, 0.94 |
+| Two, long | `narrow` | 0.62, 0.74 | 0.91, 1.02 | 0.93, 1.05 |
+| One, long | `fanout` | 0.45, 0.54 | 0.62, 0.76 | 1.01, 1.06 |
+| Two, long | `fanout` | 0.75, 0.78 | 1.53, 1.41 | 1.55, 1.48 |
+| One, long | `siblings` | 0.33, 0.41 | 0.76, 0.83 | 1.06, 0.99 |
+| Two, long | `siblings` | 0.39, 0.41 | 0.69, 0.80 | 0.96, 1.01 |
+| One, long | `quickconstruct` | 0.37, 0.29 | 0.90, 1.00 | 0.84, 0.95 |
+| Two, long | `quickconstruct` | 0.42, 0.29 | 1.02, 1.40 | 0.99, 1.02 |
+
+Raw: `short/construct/`, `short/quickconstruct/`, `scope-round/construct/`,
+`scope-round/quickconstruct/`, width test `short/construct-widths/`.
+
+Reading: in run two's long sweep (v4 last, as in run one, on a machine in use) v4 came in below
+the gauge again, but on a different shape: `siblings` (0.72 and 0.79 of Update 21), with `narrow`
+and `fanout` on the gauge. This time stock was also an outlier: on `fanout` it ran 35% slower
+than both Update 21 and v4, which also made v1 look like 0.75 of stock instead of its usual 0.45.
+A server with no hotfix showing a drop of the same size on one shape is the clearest sign that
+this is per-process variation and not the hotfix. The width test (1 run of 10 s per width) had
+v4 at 1.53 to 1.60 of stock and the gauge at 1.06 to 1.14. On the ORM construction path,
+`quickconstruct`, v4 is at 0.92 of stock or better in every sweep of run two. v1 still loses a quarter to
+three quarters on every shape.
+
+### 9i. Endurance test
+
+Mixed load (`/repro/alpha` and `/repro/bravo` at 16 connections each, `fanout` and
+`quickconstruct` at 8 each), v4 first and the no-lock Update 21 server straight after. Requests
+per second in the first and last slice.
+
+**Short profile** (5 one-minute slices; raw `short/soak-<test server>/`):
+
+| Run | v4 | Update 21 (no-lock control) |
+|---|---|---|
+| One | 317 to 256 (0.83); 0 HTTP 5xx; 0 waiters; no deadlock | 337 to 253 (0.79); 4,697 HTTP 5xx; 0 waiters; no deadlock |
+| Two | 271 to 212 (0.78); 0 HTTP 5xx; 0 waiters; no deadlock | 261 to 215 (0.82); 3,549 HTTP 5xx; 0 waiters; no deadlock |
+
+**Long profile** (9 five-minute slices, a thread dump and heap reading every 60 s; raw
+`long/soak-<test server>/`):
+
+| Run | v4 | Update 21 (no-lock control) |
+|---|---|---|
+| One | 480,396 requests; 292 to 177 (0.61); **0 HTTP 5xx**; 0 waiters; no deadlock in 36 dumps; heap cycling 333 to 778 MB | 480,270 requests; 293 to 167 (0.57); 36,969 HTTP 5xx (7.7%); 0 waiters; no deadlock; heap cycling 301 to 774 MB |
+| Two | 441,000 requests; 267 to 154 (0.58); **0 HTTP 5xx**; 0 waiters; no deadlock in 36 dumps; heap cycling 342 to 827 MB | 396,841 requests; 258 to 136 (0.53); 18,576 HTTP 5xx (4.7%); 0 waiters; no deadlock; heap cycling 273 to 723 MB |
+
+Slice by slice in run two, v4: 267, 205, 182, 172, 178, 152, 179, 162, 154; the control: 258,
+210, 163, 152, 148, 149, 146, 152, 136.
+
+Reading: the same curve as run one on both servers, and v4 at or above the no-lock control in
+eight of nine slices, so the fall over the first 15 minutes is again the machine's and the pass
+bar ("no worse than the no-lock control") holds. The whole long endurance pair ran while the
+machine was in use for other work (08:53 to 10:25), which is why both servers' absolute figures
+are lower than in run one.
+
+### 9j. The pass bar, both runs
+
+| Line of the pass bar (static analysis) | Run one | Run two |
+|---|---|---|
+| 0 contaminated in at least 1,000,000 warmed requests | pass, 0 in 1,540,000 | pass, 0 in 1,540,000 |
+| Real workload within 5% of stock at 8, 32 and 64 connections | pass | pass (0.97, 1.09, 1.15 counting stock's successful requests) |
+| Plain-construct shapes within noise of the Update 21 gauge | open item | pass: the variation hits servers with no hotfix just as hard (9a) |
+| 0 threads waiting in `resolveName` | pass | pass |
+| P1 to P8 identical to stock, P2 completes, deadlock demo passes | pass | pass |
+| Endurance curve no worse than the no-lock control | pass | pass |
