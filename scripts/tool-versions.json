@@ -1,5 +1,5 @@
 {
-    "_comment": "Pinned external tools for the hotfix benchmark. Get-BenchmarkTools.ps1 downloads these and refuses to continue on a SHA256 mismatch. Pinning the version and hash here, rather than committing the binaries, keeps the repo small and makes every result traceable to an exact tool build.",
+    "_comment": "Pinned external tools for the test harness. Get-BenchmarkTools.ps1 downloads these and refuses to continue on a SHA256 mismatch. Pinning the version and hash here, rather than committing the binaries, keeps the repo small and makes every result traceable to an exact tool build.",
 
     "bombardier": {
         "version": "v2.0.2",
@@ -11,41 +11,5 @@
             "darwin-amd64":  { "asset": "bombardier-darwin-amd64",      "sha256": "27def2847d80cdeec9c3a7fd21ef6be13fc5657c4ee9f61bdb86e307413d8d56", "target": "bombardier" },
             "darwin-arm64":  { "asset": "bombardier-darwin-arm64",      "sha256": "5d893be6e3e90d660c798b13f7616bdcee6954c04be4f34eb5b45a667e50e18b", "target": "bombardier" }
         }
-    },
-
-    "cfr": {
-        "version": "0.152",
-        "required": false,
-        "note": "Java decompiler used for the static hotfix analysis in docs/adobe-hotfixes/1-first-hotfix-static-analysis.md. Runs on a plain JRE.",
-        "urlTemplate": "https://github.com/leibnitz27/cfr/releases/download/{version}/{asset}",
-        "assets": {
-            "any": { "asset": "cfr-0.152.jar", "sha256": "f686e8f3ded377d7bc87d216a90e9e9512df4156e75b06c655a16648ae8765b2", "target": "cfr.jar" }
-        }
-    },
-
-    "asm": {
-        "version": "9.7",
-        "required": false,
-        "note": "ObjectWeb ASM core, used by scripts/java/PatchHotfix.java to surgically edit one method in the Adobe hotfix jar. SHA1 of both ASM jars was cross-checked against Maven Central's published .sha1 siblings.",
-        "urlTemplate": "https://repo1.maven.org/maven2/org/ow2/asm/asm/{version}/{asset}",
-        "assets": {
-            "any": { "asset": "asm-9.7.jar", "sha256": "adf46d5e34940bdf148ecdd26a9ee8eea94496a72034ff7141066b3eea5c4e9d", "target": "asm-9.7.jar" }
-        }
-    },
-
-    "asm-tree": {
-        "version": "9.7",
-        "required": false,
-        "note": "ObjectWeb ASM Tree API (depends on asm), used by scripts/java/PatchHotfix.java.",
-        "urlTemplate": "https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/{version}/{asset}",
-        "assets": {
-            "any": { "asset": "asm-tree-9.7.jar", "sha256": "62f4b3bc436045c1acb5c3ba2d8ec556ec3369093d7f5d06c747eb04b56d52b1", "target": "asm-tree-9.7.jar" }
-        }
-    },
-
-    "oha": {
-        "version": "not-pinned",
-        "required": false,
-        "note": "Optional fixed-rate latency check with coordinated-omission correction. Install separately with 'winget install hatoo.oha' (Windows) or 'cargo install oha'. Not downloaded by Get-BenchmarkTools.ps1 because oha ships as an installer rather than a bare binary."
     }
 }

@@ -24,10 +24,10 @@
     and starts it fresh before EVERY session, waits until /benchmark/engine answers, and then
     sends -WarmRequests serial requests (default 500 with -ColdStart) before the burst. A burst
     against a freshly started, un-warmed server is refused: the startup crash is a separate
-    issue, filed with Adobe on its own, and is kept out of these results.
+    bug (github.com/homestar9/acf-startup-npe-repro) and is kept out of these results.
 
 .PARAMETER Test server
-    Test server name from scripts\TestServers.ps1 (u23, lock-u23, buggy, perclass-u23, localtemp-u23).
+    Test server name from scripts\TestServers.ps1 (u23, buggy, localtemp-u23, lucee6, boxlang).
 
 .PARAMETER Profile
     short (default): 2 sessions x 20,000 requests, about 5 minutes on a locked test server.

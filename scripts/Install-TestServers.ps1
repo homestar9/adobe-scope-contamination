@@ -6,10 +6,9 @@
     Test servers come from scripts\TestServers.ps1 (the one table every script shares):
 
         u23           60843   ACF 2023.0.23, no jar            stock reference
-        lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
         buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
-        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected)
-        localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock, compiler temporaries kept local (under test)
+        localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock, compiler temporaries kept local (the fix)
+        lucee6, boxlang                                        other engines (name them with -Servers the first time)
 
     Flow: start each test server once so CommandBox installs the engine, stop them all (a jar copied
     into a running server is not picked up), place each test server's pinned jar under the ORIGINAL
@@ -17,7 +16,7 @@
     says it is:
 
       - /benchmark/engine classSources: TemplateProxyFactory from the hotfix jar or not;
-        TemplateProxy/UDFMethod/Closure from the hotfix jar (v1) or not (v3, stock);
+        TemplateProxy/UDFMethod/Closure from the hotfix jar or not;
       - /benchmark/engine classSources: NeoPageContext from the hotfix jar (v4) or not;
       - /benchmark/engine constructionLocks: the runtime lock fingerprint (global / perclass / none);
       - /benchmark/engine implicitTemps: where inline-literal temporaries land (shared-variables / function-local);
@@ -29,7 +28,7 @@
 
 .PARAMETER Servers
     Which test servers to handle. Default: every test server in TestServers.ps1 that is already
-    installed under .engine and is not opt-in (concmap-u23 is opt-in). A test server that has
+    installed under .engine and is not opt-in. A test server that has
     never been installed must be named here the first time, e.g. -Servers lucee6,boxlang.
     Other test servers are left untouched.
 

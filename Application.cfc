@@ -11,7 +11,7 @@ component {
 	 * Application Properties: Modify as you see fit!
 	 * --------------------------------------------------------------------------
 	 */
-	this.name                 = "My ColdBox Application";
+	this.name                 = "adobe-scope-contamination";
 	// Sessions are irrelevant to this concurrency reproduction and load tools (bombardier/ab)
 	// send no CFID/CFTOKEN, so each request would otherwise mint a fresh session. Disabling
 	// keeps the stress purely on concurrent request threads, where the bug manifests.

@@ -11,16 +11,17 @@
     deployed under the ORIGINAL filename hf202300-4232227.jar so classloader precedence is
     identical across test servers; only the bytes differ, which is why every jar has a pinned SHA here.
 
-    Test servers (Update 23 test runs, September and October 2026):
+    Test servers:
 
         u23           60843   ACF 2023.0.23, no jar            stock reference
-        lock-u23      60844   ACF 2023.0.23 + Adobe v1 jar     global construction lock (rejected)
         buggy         60845   ACF 2023.0.21, no jar            known-bad check; no-lock speed reference
         localtemp-u23 60852   ACF 2023.0.23 + Adobe v4 jar     no lock; compiler temporaries kept in the
                                                                function local scope (the fix, October 2026)
-        perclass-u23  60848   ACF 2023.0.23 + Adobe v3 jar     per-class construction locks (rejected; opt-in)
         lucee6        60850   Lucee 6, no jar                  no contamination bug: performance reference
         boxlang       60851   BoxLang 1 (CFML compat), no jar  no contamination bug: performance reference
+
+    Servers for Adobe's first and third hotfixes (lock-u23, perclass-u23) and for our own
+    experimental build (concmap-u23) are kept at git tag research-notes-2026-10.
 
     The Adobe test servers share one JDK (openjdk17). BoxLang needs Java 21, so JVM comparability is
     asserted within the Adobe family only; the other engines are a cross-engine reference,
@@ -36,12 +37,7 @@ $BenchRepoRoot = Split-Path -Parent $PSScriptRoot
 
 # Adobe-supplied jars, by the name they carry in hotfixes\. Audited SHA256 values.
 $BenchHotfixJars = [ordered]@{
-    'adobe-v1' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v1.jar'; Sha = '7B586D55814B120FB818EAB7EF16DD83336449A6088162D627F114A6CC352C56'; Note = 'v1: per-instance fixes in 4 classes + global synchronized construction lock' }
-    'adobe-v2' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v2.jar'; Sha = '137889D7741E1D2F1763B0698CAF37B405878C7472FDC1BF14051092FFB06FC6';   Note = 'v2: ExprAssembler only, byte-identical to stock Update 23 (never deployed)' }
-    'adobe-v3' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v3.jar'; Sha = 'EFB0AA56912C3C7046DA47BBCC1FC28776A9F9AA1D18FBBF09CF1A3CE4780B0E'; Note = 'v3: TemplateProxyFactory only, per-class ReentrantLock held with all ancestor locks' }
     'adobe-v4' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-adobe-v4.jar'; Sha = '9D17AD33BB1D845D0303346905A2C0E8CA3FA6D4E2E087A45590C3FEAE4C5E81'; Note = 'v4: NeoPageContext only, compiler temporaries for inline literals kept in the function local scope, no lock' }
-    # Our own build (docs/root-cause/contamination-investigation-and-startup-crash-fix.md): v1 plus a CFConcurrentHashMap-backed CaseInsensitiveMap.
-    'concmap-v1' = [pscustomobject]@{ Path = Join-Path $BenchRepoRoot 'hotfixes\hf202300-4232227-concmap-v1.jar'; Sha = '4943E46A045C15D9D32E0C2D108F00CC0001C5694D9D222A10B85780F32C985A'; Note = 'v1 + concurrent CaseInsensitiveMap; the cleanest build measured (0/300k cold, Aug 2026)' }
 }
 
 $TestServers = @(
@@ -52,22 +48,10 @@ $TestServers = @(
         Role = 'stock Update 23 reference (fails every request until restart cold; serially warmed for throughput)'
     },
     [pscustomobject]@{
-        Name = 'lock-u23';     Config = 'server-bench-lock-u23.json';     Home = '.engine\bench-lock-u23';     Port = 60844
-        Engine = 'adobe@2023.0.23'; Jar = 'adobe-v1'
-        ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $true;  LockDesign = 'global'; Family = 'adobe'
-        Role = 'Adobe v1: correctness bar and the rejected global-lock cost'
-    },
-    [pscustomobject]@{
         Name = 'buggy';        Config = 'server-bench-buggy.json';        Home = '.engine\bench-buggy';        Port = 60845
         Engine = 'adobe@2023.0.21'; Jar = $null
         ExpectClean = $false;  TpfFromHotfix = $false; PerInstanceFromHotfix = $false; LockDesign = 'none'; Family = 'adobe'
         Role = 'ACF 2023.0.21 known-bad check (must reproduce) and no-lock speed reference'
-    },
-    [pscustomobject]@{
-        Name = 'perclass-u23'; Config = 'server-bench-perclass-u23.json'; Home = '.engine\bench-perclass-u23'; Port = 60848
-        Engine = 'adobe@2023.0.23'; Jar = 'adobe-v3'
-        ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $false; LockDesign = 'perclass'; Family = 'adobe'; OptIn = $true
-        Role = 'Adobe v3: per-class construction locks (rejected September 2026; opt-in, the comparison that matters is stock / v1 / v4)'
     },
     [pscustomobject]@{
         Name = 'localtemp-u23'; Config = 'server-bench-localtemp-u23.json'; Home = '.engine\bench-localtemp-u23'; Port = 60852
@@ -76,9 +60,8 @@ $TestServers = @(
         PageContextFromHotfix = $true
         Role = 'Adobe v4: no lock, compiler temporaries kept in the function local scope, under test'
     },
-    # Cross-engine performance references. Neither engine has the contamination bug (see
-    # docs/root-cause/how-lucee-and-boxlang-avoid-it.md), so they show what the same application costs on an
-    # engine that never needed a construction lock.
+    # Cross-engine references. Neither engine has the contamination bug, so they show what the same
+    # application costs on an engine that never needed a construction lock.
     [pscustomobject]@{
         Name = 'lucee6';       Config = 'server-bench-lucee6.json';       Home = '.engine\bench-lucee6';       Port = 60850
         Engine = 'lucee@6'; Jar = $null
@@ -90,47 +73,28 @@ $TestServers = @(
         Engine = 'boxlang@1'; Jar = $null
         ExpectClean = $true;   TpfFromHotfix = $false; PerInstanceFromHotfix = $false; LockDesign = 'n/a'; Family = 'boxlang'
         Role = 'BoxLang 1 with bx-compat-cfml: no contamination bug, performance reference'
-    },
-    # Opt-in same-day check server (not in the default set): tells whether today's environment still
-    # behaves like the August record. Select it explicitly with -Servers concmap-u23.
-    [pscustomobject]@{
-        Name = 'concmap-u23';  Config = 'server-bench-concmap-u23.json';  Home = '.engine\bench-concmap-u23';  Port = 60849
-        Engine = 'adobe@2023.0.23'; Jar = 'concmap-v1'
-        ExpectClean = $true;   TpfFromHotfix = $true;  PerInstanceFromHotfix = $true;  LockDesign = 'global'; Family = 'adobe'; OptIn = $true
-        Role = 'our v1 + concurrent-map build: same-day calibration for the fresh-start contamination test'
     }
 )
 
 # ---------------------------------------------------------------- run profiles
 # 'short' is the default everywhere: every script finishes in about five minutes or less and
 # is good enough to rank test servers and catch a regression. 'long' is the long form (30 s runs,
-# five connection levels, 3 x 100k cold sessions, 45 min endurance test) for a number that goes in a
-# report. Any parameter given explicitly on the command line beats the profile.
+# five connection levels, 3 x 100k sessions) for a number that goes in a report. Any parameter
+# given explicitly on the command line beats the profile.
 $BenchProfiles = @{
     short = @{
         Contamination  = @{ TotalRequests = 20000;  Sessions = 2; Connections = 20 }
         Repro          = @{ Connections = @( 1, 8, 32 ); Runs = 2; Duration = '10s'; WarmupSeconds = 8;  SerialWarmupRequests = 100 }
-        Construct      = @{ Shapes = @( 'narrow', 'fanout', 'siblings' ); Connections = @( 1, 32 ); Runs = 2; Duration = '10s'; WarmupSeconds = 5; ControlConnections = @() }
         QuickConstruct = @{ Connections = @( 1, 32 ); Runs = 2; Duration = '10s'; Count = 50; WarmupSeconds = 5 }
-        Widths         = @{ Widths = @( 1, 4, 16 ); Connections = @( 32 ); Runs = 1; Duration = '10s'; WarmupSeconds = 5 }
-        LockEvidence   = @{ Samples = 10; SampleIntervalSeconds = 1 }
-        Torture        = @{ Reps = 3 }
-        Soak           = @{ Minutes = 5; SliceMinutes = 1; SampleSeconds = 20 }
     }
     long = @{
         Contamination  = @{ TotalRequests = 100000; Sessions = 3; Connections = 20 }
         Repro          = @{ Connections = @( 1, 4, 8, 16, 32 ); Runs = 3; Duration = '30s'; WarmupSeconds = 20; SerialWarmupRequests = 200 }
-        Construct      = @{ Shapes = @( 'narrow', 'wide', 'closure', 'fanout', 'siblings', 'deep', 'slowfanout', 'slowsiblings' ); Connections = @( 1, 8, 16, 32 ); Runs = 2; Duration = '20s'; WarmupSeconds = 20; ControlConnections = @( 1, 8, 32 ) }
         QuickConstruct = @{ Connections = @( 1, 8, 32 ); Runs = 3; Duration = '20s'; Count = 50; WarmupSeconds = 20 }
-        Widths         = @{ Widths = @( 1, 2, 4, 8, 16 ); Connections = @( 32 ); Runs = 2; Duration = '20s'; WarmupSeconds = 20 }
-        LockEvidence   = @{ Samples = 20; SampleIntervalSeconds = 1 }
-        Torture        = @{ Reps = 5 }
-        Soak           = @{ Minutes = 45; SliceMinutes = 5; SampleSeconds = 60 }
     }
 }
 
-# The round every script writes under. September's v3 results stay in benchmark-results-u23\adobe-v3.
-# Set BENCH_ROUND in the environment to write a repeat run next to the first instead of over it,
+# The round every script writes under (benchmark-results-u23\<round>). Set BENCH_ROUND in the environment to write a repeat run next to the first instead of over it,
 # e.g. $env:BENCH_ROUND = 'adobe-v4-run2' (the second, confirming run of the fourth hotfix).
 $BenchRound = if ( $env:BENCH_ROUND ) { $env:BENCH_ROUND } else { 'adobe-v4' }
 
@@ -369,10 +333,8 @@ function Assert-TestServerIdentity {
     }
     foreach ( $c in $BenchOtherClasses ) {
         $s = $src.$c
-        # Only the concmap build overlays CaseInsensitiveMap; nothing overlays ObjectDuplicator.
-        $allowed = ( $Server.Jar -eq 'concmap-v1' -and $c -eq 'coldfusion.util.CaseInsensitiveMap' )
-        if ( $allowed -and $s -notmatch 'hf202300-4232227' ) { throw "${name}: $c is not loaded from the concmap jar ($s)." }
-        if ( -not $allowed -and $s -match 'hf202300-4232227' ) { throw "${name}: $c is loaded from a hotfix jar ($s); this test server's jar must not overlay it." }
+        # No jar in the table overlays these two classes.
+        if ( $s -match 'hf202300-4232227' ) { throw "${name}: $c is loaded from a hotfix jar ($s); this test server's jar must not overlay it." }
     }
     $pageCtxFromHotfix = ( $Server.PSObject.Properties.Name -contains 'PageContextFromHotfix' ) -and $Server.PageContextFromHotfix
     $pc = $src.$BenchPageContextClass

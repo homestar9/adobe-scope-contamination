@@ -14,7 +14,7 @@
    (or vice-versa) while still SETting the *original* FK column. Because
    [bravo_child] has no [alpha_parent_id] column, SQL Server throws
    "Invalid column name 'alpha_parent_id'" — exactly mirroring the
-   production failure where [user_type] had no [remoteAppId] column.
+   production failure, where the wrong table had no such column.
 
    Run once against your (empty) "adobe-temp" datasource. Re-runnable.
    ===================================================================== */

@@ -1,58 +1,30 @@
 {
-    "name":"My ColdBox App",
+    "name":"adobe-scope-contamination",
     "version":"1.0.0",
-    "author":"You",
-    "location":"forgeboxStorage",
-    "slug":"my-coldbox-app",
+    "author":"David Levin",
+    "slug":"adobe-scope-contamination",
     "createPackageDirectory":false,
     "type":"mvc",
-    "keywords":"",
-    "homepage":"",
-    "documentation":"",
+    "homepage":"https://github.com/homestar9/adobe-scope-contamination",
     "repository":{
-        "type":"",
-        "url":""
+        "type":"git",
+        "url":"https://github.com/homestar9/adobe-scope-contamination"
     },
-    "bugs":"",
-    "shortDescription":"",
-    "contributors":[],
-    "ignore":[],
-    "devDependencies":{
-        "testbox":"*"
-    },
+    "shortDescription":"Reproduction of an Adobe ColdFusion 2023 scope contamination bug under concurrent load, and test results for Adobe's hotfixes",
     "dependencies":{
-        "coldbox":"^8.0.0",
-        "quick":"^12.0.0"
+        "coldbox":"8.1.0",
+        "quick":"12.0.12"
     },
     "installPaths":{
         "coldbox":"coldbox/",
-        "testbox":"testbox/",
         "quick":"modules/quick/"
     },
     "scripts":{
-        "postInstall":"pathExists .env || cp .env.example .env && package set ignore=[]",
-        "start:boxlang" : "server start serverConfigFile=server-boxlang-cfml@1.json",
-        "start:lucee6" : "server start serverConfigFile=server-lucee@6.json",
-        "start:2023" : "server start serverConfigFile=server.json",
-        "start:2025" : "server start serverConfigFile=server-adobe@2025.json",
-        "stop:boxlang" : "server stop serverConfigFile=server-boxlang-cfml@1.json",
-        "stop:lucee6" : "server stop serverConfigFile=server-lucee@6.json",
-        "stop:2023" : "server stop serverConfigFile=server.json",
-        "stop:2025" : "server stop serverConfigFile=server-adobe@2025.json",
-        "forget:boxlang": "server forget serverConfigFile=server-boxlang-cfml@1.json",
-        "forget:lucee6": "server forget serverConfigFile=server-lucee@6.json",
-        "forget:2023": "server forget serverConfigFile=server.json",
-        "forget:2025": "server forget serverConfigFile=server-adobe@2025.json",
-        "start:bench-patched" : "server start serverConfigFile=server-bench-patched.json",
-        "start:bench-baseline" : "server start serverConfigFile=server-bench-baseline.json",
-        "stop:bench-patched" : "server stop serverConfigFile=server-bench-patched.json",
-        "stop:bench-baseline" : "server stop serverConfigFile=server-bench-baseline.json",
-        "forget:bench-patched" : "server forget serverConfigFile=server-bench-patched.json",
-        "forget:bench-baseline" : "server forget serverConfigFile=server-bench-baseline.json"
-    },
-    "testbox":{
-        "runner":"/tests/runner.cfm"
+        "postInstall":"pathExists .env || cp .env.example .env",
+        "start:2023":"server start serverConfigFile=server.json",
+        "stop:2023":"server stop serverConfigFile=server.json",
+        "forget:2023":"server forget serverConfigFile=server.json"
     },
     "language":"CFML",
-    "description":"A ColdBox Application created with the ColdBox CLI"
+    "description":"A self-contained ColdBox + Quick ORM + SQL Server reproduction of Adobe ColdFusion 2023 CFC scope contamination under concurrent load, the standalone repros, and the harness used to test Adobe's hotfixes."
 }

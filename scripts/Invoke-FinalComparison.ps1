@@ -7,7 +7,8 @@
 .DESCRIPTION
     Two test servers only: u23 (stock) and localtemp-u23 (v4). Every burst hits a server that was
     restarted, answered /benchmark/engine and took serial warm-up requests first (the startup crash
-    on a freshly started server is a separate Adobe case and is not measured here).
+    on a freshly started server is a separate bug, see github.com/homestar9/acf-startup-npe-repro,
+    and is not measured here).
 
     Steps:
       0  stop every other test server, restart both, serial warm-up
@@ -24,6 +25,8 @@
     Results: benchmark-results-u23\<round>\ (default round final-v4-vs-stock; $env:BENCH_ROUND or
     -Round overrides). About 47 minutes with the defaults on a quiet machine. Run
     Install-TestServers.ps1 -SkipInstall -ClearFelixCache -Servers u23,localtemp-u23 first.
+    -StopDropbox pauses the Dropbox client for the run (file sync on the repo folder adds noise
+    to the speed figures) and restarts it afterwards.
 
 .EXAMPLE
     .\scripts\Invoke-FinalComparison.ps1
@@ -51,7 +54,7 @@ param(
     [string]   $SpeedDuration         = '30s',
     [string]   $QuickDuration         = '20s',
     [double]   $SpreadFlagPercent     = 10,
-    [switch]   $KeepDropbox,
+    [switch]   $StopDropbox,
     [switch]   $KeepServers,
     [switch]   $SummaryOnly
 )
@@ -136,7 +139,7 @@ foreach ( $srv in $TestServers ) {
     }
 }
 $dropbox = $null
-if ( -not $KeepDropbox ) { $dropbox = Stop-DropboxForBenchmark }
+if ( $StopDropbox ) { $dropbox = Stop-DropboxForBenchmark }
 
 try {
     Step '0 restart both test servers, serial warm-up' { Reset-Pair }

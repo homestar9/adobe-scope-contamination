@@ -6,10 +6,8 @@
 .DESCRIPTION
     Test servers come from scripts\TestServers.ps1; stand them up first with Install-TestServers.ps1.
 
-    /benchmark/construct isolates CFC construction; this test measures the production code
-    path (entity construction through WireBox, Quick metadata, a real UPDATE), which is what
-    Adobe's customers will actually feel. Every Quick entity extends BaseEntity, so every
-    construction on the per-class-lock test server also takes the shared BaseEntity lock.
+    This test measures the production code path (entity construction through WireBox, Quick
+    metadata, a real UPDATE), which is what an application actually feels.
 
     Test servers whose 5xx rate is above -MaxErrorPercent are reported INVALID: their RPS measures
     error-page generation, not work. Stock Update 23 fails every request until restart under a cold concurrent burst,
@@ -203,13 +201,11 @@ $md = New-Object System.Text.StringBuilder
 $hdr = "| Conns |"; $sep = "|---|"
 foreach ( $srv in $serverSet ) { $hdr += " $($srv.Name) | err% | errors | p99 |"; $sep += "---|---|---|---|" }
 foreach ( $srv in $serverSet ) { if ( $srv.Name -ne $stockName ) { $hdr += " $($srv.Name)/$stockName |"; $sep += "---|" } }
-if ( $serverSet.Name -contains 'lock-u23' -and $serverSet.Name -contains 'perclass-u23' ) { $hdr += " perclass/lock |"; $sep += "---|" }
 [void]$md.AppendLine( $hdr ); [void]$md.AppendLine( $sep )
 foreach ( $r in $rows ) {
     $line = "| $($r.Connections) |"
     foreach ( $srv in $serverSet ) { $line += " $($r.($srv.Name)) | $($r."$($srv.Name) err%") | $($r."$($srv.Name) errors") | $($r."$($srv.Name) p99ms") |" }
     foreach ( $srv in $serverSet ) { if ( $srv.Name -ne $stockName ) { $line += " $( Get-Ratio $r.($srv.Name) $r.$stockName ) |" } }
-    if ( $serverSet.Name -contains 'lock-u23' -and $serverSet.Name -contains 'perclass-u23' ) { $line += " $( Get-Ratio $r.'perclass-u23' $r.'lock-u23' ) |" }
     [void]$md.AppendLine( $line )
 }
 [void]$md.AppendLine( "" )
@@ -229,4 +225,3 @@ $md.ToString() | Set-Content -Path $summaryPath -Encoding utf8
 
 if ( $failed -gt 0 ) { Write-Host "`n$failed measurement(s) failed to produce JSON." -ForegroundColor Yellow }
 Write-Host "`nResults + $( Split-Path -Leaf $summaryPath ) in $OutputDir" -ForegroundColor Green
-Write-Host "Lock evidence under this workload: .\scripts\Get-LockEvidence.ps1 -Server perclass-u23 -Endpoint repro" -ForegroundColor Cyan

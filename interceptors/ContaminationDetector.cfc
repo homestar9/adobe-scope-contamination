@@ -60,34 +60,6 @@ component {
 		} );
 	}
 
-	/**
-	 * Fired by the patched Quick module (patches/quick/0002) when the
-	 * entity-table guard finds a builder whose table does not match its entity
-	 * just before execution.  Records each event so gate runs can count how
-	 * many statements the guard caught (and, in repair mode, fixed) before
-	 * any SQL ran.  With stock Quick this interception point does not exist,
-	 * so this method is simply never called.
-	 */
-	void function quickEntityTableMismatch( required any event, required struct interceptData ) {
-		application.tableRepairCount = ( application.keyExists( "tableRepairCount" ) ? application.tableRepairCount : 0 ) + 1;
-
-		var logDir = expandPath( "/logs" );
-		if ( !directoryExists( logDir ) ) {
-			directoryCreate( logDir );
-		}
-		var line = "TABLE_MISMATCH_CAUGHT ##" & application.tableRepairCount & " " & serializeJSON( {
-			"detectedAt"    : dateTimeFormat( now(), "yyyy-mm-dd HH:nn:ss.lll" ),
-			"thread"        : getThreadName(),
-			"operation"     : arguments.interceptData.keyExists( "operation" ) ? arguments.interceptData.operation : "",
-			"expectedTable" : arguments.interceptData.keyExists( "expectedTable" ) ? arguments.interceptData.expectedTable : "",
-			"actualTable"   : arguments.interceptData.keyExists( "actualTable" ) ? arguments.interceptData.actualTable : "",
-			"repaired"      : arguments.interceptData.keyExists( "repaired" ) ? arguments.interceptData.repaired : ""
-		} ) & chr( 10 );
-		fileAppend( logDir & "/contamination_log.txt", line, "UTF-8" );
-
-		variables.log.warn( "QUICK TABLE MISMATCH CAUGHT: " & line );
-	}
-
 	// ------------------------------------------------------------------ helpers
 
 	private string function extractFirstGroup( required string pattern, required string subject ) {
